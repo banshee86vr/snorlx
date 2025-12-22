@@ -1,0 +1,143 @@
+# Default values for snorlx
+replicaCount: 1
+
+image:
+  backend:
+    repository: ghcr.io/banshee86vr/snorlx-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ghcr.io/banshee86vr/snorlx-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Backend configuration
+backend:
+  replicaCount: 1
+  port: 8080
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env:
+    LOG_LEVEL: info
+
+# Frontend configuration
+frontend:
+  replicaCount: 1
+  port: 80
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Database configuration
+database:
+  # Use internal database (TimescaleDB)
+  internal: true
+  # External database URL (used when internal is false)
+  externalUrl: ""
+  
+  # Internal database settings
+  image:
+    repository: timescale/timescaledb
+    tag: latest-pg16
+    pullPolicy: IfNotPresent
+  storage:
+    size: 10Gi
+    storageClass: ""
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+# GitHub App configuration (required)
+github:
+  appId: ""
+  clientId: ""
+  clientSecret: ""
+  privateKey: ""
+  webhookSecret: ""
+
+# Session configuration
+session:
+  secret: ""  # Will be auto-generated if not provided
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: snorlx.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: snorlx-tls
+  #    hosts:
+  #      - snorlx.local
+
+# Service configuration
+service:
+  type: ClusterIP
+  backend:
+    port: 8080
+  frontend:
+    port: 80
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Network Policy
+networkPolicy:
+  enabled: false
+

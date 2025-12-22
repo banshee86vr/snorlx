@@ -1,0 +1,31 @@
+{
+  "name": "snorlx",
+  "version": "1.0.0",
+  "description": "CI/CD Dashboard for GitHub Actions - Centralized visibility over workflows, metrics, and costs",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"pnpm run dev:backend\" \"pnpm run dev:frontend\"",
+    "dev:frontend": "pnpm --filter snorlx-frontend dev",
+    "dev:backend": "cd backend && go run ./cmd/server",
+    "build": "pnpm run build:backend && pnpm run build:frontend",
+    "build:frontend": "pnpm --filter snorlx-frontend build",
+    "build:backend": "cd backend && go build -o dist/server ./cmd/server",
+    "start": "cd backend && ./dist/server",
+    "lint": "pnpm --filter snorlx-frontend lint",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:build": "docker compose build",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

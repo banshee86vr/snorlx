@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snorlx.fullname" . }}-backend
+  labels:
+    {{- include "snorlx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.backend.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "snorlx.backend.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snorlx.fullname" . }}-frontend
+  labels:
+    {{- include "snorlx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.frontend.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "snorlx.frontend.selectorLabels" . | nindent 4 }}
+{{- if .Values.database.internal }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "snorlx.fullname" . }}-db
+  labels:
+    {{- include "snorlx.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "snorlx.database.selectorLabels" . | nindent 4 }}
+{{- end }}
+

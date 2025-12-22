@@ -1,0 +1,844 @@
+package handlers
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strconv"
+	"time"
+
+	"snorlx/backend/internal/config"
+	"snorlx/backend/internal/github"
+	"snorlx/backend/internal/models"
+	"snorlx/backend/internal/storage"
+	"snorlx/backend/internal/websocket"
+
+	"github.com/go-chi/chi/v5"
+	gh "github.com/google/go-github/v60/github"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/oauth2"
+)
+
+// Handler contains all HTTP handlers
+type Handler struct {
+	config   *config.Config
+	storage  storage.Storage
+	ghClient *github.Client
+	wsHub    *websocket.Hub
+}
+
+// New creates a new Handler
+func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsHub *websocket.Hub) *Handler {
+	return &Handler{
+		config:   cfg,
+		storage:  store,
+		ghClient: ghClient,
+		wsHub:    wsHub,
+	}
+}
+
+// Context key for user
+type contextKey string
+
+const userContextKey contextKey = "user"
+
+// ===== Auth Handlers =====
+
+// Login initiates GitHub OAuth
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	state := generateState()
+
+	// Store state in cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		Path:     "/",
+		MaxAge:   300,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	url := h.ghClient.GetAuthURL(state)
+	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+}
+
+// Callback handles GitHub OAuth callback
+func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
+	// Verify state
+	stateCookie, err := r.Cookie("oauth_state")
+	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
+		http.Error(w, "Invalid state", http.StatusBadRequest)
+		return
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:   "oauth_state",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+
+	// Exchange code for token
+	code := r.URL.Query().Get("code")
+	token, err := h.ghClient.ExchangeCode(r.Context(), code)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to exchange code")
+		http.Error(w, "Failed to authenticate", http.StatusInternalServerError)
+		return
+	}
+
+	// Get user info
+	client := h.ghClient.GetUserClient(r.Context(), token)
+	ghUser, err := h.ghClient.GetUser(r.Context(), client)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get user info")
+		http.Error(w, "Failed to get user info", http.StatusInternalServerError)
+		return
+	}
+
+	// Save or update user
+	ghUser.AccessToken = token.AccessToken
+	ghUser.TokenExpiresAt = &token.Expiry
+	user, err := h.storage.UpsertUser(r.Context(), ghUser)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to save user")
+		http.Error(w, "Failed to save user", http.StatusInternalServerError)
+		return
+	}
+
+	// Create session
+	sessionID := generateSessionID()
+	expiresAt := time.Now().Add(24 * time.Hour * 7) // 7 days
+
+	session := &models.Session{
+		ID:        sessionID,
+		UserID:    user.ID,
+		ExpiresAt: expiresAt,
+	}
+	if err := h.storage.CreateSession(r.Context(), session); err != nil {
+		log.Error().Err(err).Msg("Failed to create session")
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Set session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    sessionID,
+		Path:     "/",
+		Expires:  expiresAt,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Redirect to frontend
+	http.Redirect(w, r, h.config.FrontendURL, http.StatusTemporaryRedirect)
+}
+
+// Logout logs out the user
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	sessionCookie, err := r.Cookie("session")
+	if err == nil {
+		h.storage.DeleteSession(r.Context(), sessionCookie.Value)
+	}
+
+	// Clear session cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:   "session",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// AuthStatus returns the current authentication status
+func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
+	// Check session cookie directly (this endpoint is not behind AuthMiddleware)
+	sessionCookie, err := r.Cookie("session")
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"authenticated": false,
+		})
+		return
+	}
+
+	// Get session from storage
+	_, user, err := h.storage.GetSession(r.Context(), sessionCookie.Value)
+	if err != nil || user == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"authenticated": false,
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"authenticated": true,
+		"user":          user,
+	})
+}
+
+// AuthMiddleware checks if the user is authenticated
+func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessionCookie, err := r.Cookie("session")
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Get session from storage
+		_, user, err := h.storage.GetSession(r.Context(), sessionCookie.Value)
+		if err != nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Add user to context
+		ctx := context.WithValue(r.Context(), userContextKey, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// ===== Webhook Handler =====
+
+// HandleWebhook processes GitHub webhook events
+func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	// Read payload
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read payload", http.StatusBadRequest)
+		return
+	}
+
+	// Validate signature
+	signature := r.Header.Get("X-Hub-Signature-256")
+	if !h.ghClient.ValidateWebhookSignature(payload, signature) {
+		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse event
+	eventType := r.Header.Get("X-GitHub-Event")
+	event, err := h.ghClient.ParseWebhookEvent(eventType, payload)
+	if err != nil {
+		log.Warn().Str("event_type", eventType).Msg("Unsupported webhook event")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Process event
+	go h.processWebhookEvent(eventType, event)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) processWebhookEvent(eventType string, event interface{}) {
+	ctx := context.Background()
+
+	switch e := event.(type) {
+	case *gh.WorkflowRunEvent:
+		log.Info().
+			Str("action", e.GetAction()).
+			Int64("run_id", e.GetWorkflowRun().GetID()).
+			Msg("Processing workflow_run event")
+
+		run := h.convertWorkflowRun(e.GetWorkflowRun(), e.GetRepo())
+		if _, err := h.storage.UpsertRun(ctx, run); err != nil {
+			log.Error().Err(err).Msg("Failed to save workflow run")
+			return
+		}
+
+		// Broadcast update via WebSocket
+		h.wsHub.BroadcastWorkflowRunUpdate(run)
+
+	case *gh.WorkflowJobEvent:
+		log.Info().
+			Str("action", e.GetAction()).
+			Int64("job_id", e.GetWorkflowJob().GetID()).
+			Msg("Processing workflow_job event")
+
+		// Broadcast update via WebSocket
+		h.wsHub.BroadcastWorkflowJobUpdate(e.GetWorkflowJob())
+
+	case *gh.DeploymentEvent:
+		log.Info().
+			Int64("deployment_id", e.GetDeployment().GetID()).
+			Msg("Processing deployment event")
+
+		h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+
+	case *gh.DeploymentStatusEvent:
+		log.Info().
+			Int64("deployment_id", e.GetDeployment().GetID()).
+			Str("status", e.GetDeploymentStatus().GetState()).
+			Msg("Processing deployment_status event")
+
+		h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+	}
+}
+
+// ===== WebSocket Handler =====
+
+// WebSocketHandler handles WebSocket connections
+func (h *Handler) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
+	// Get user from context
+	user := h.getUserFromContext(r.Context())
+	userID := 0
+	if user != nil {
+		userID = user.ID
+	}
+
+	// Upgrade HTTP connection to WebSocket
+	upgrader := websocket.GetUpgrader()
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to upgrade to WebSocket")
+		return
+	}
+
+	// Create client
+	client := websocket.NewClient(generateState(), userID, h.wsHub, conn)
+
+	// Register client
+	h.wsHub.Register(client)
+
+	// Start read and write pumps
+	go client.WritePump()
+	go client.ReadPump()
+}
+
+// ===== Organization Handlers =====
+
+// ListOrganizations lists all organizations
+func (h *Handler) ListOrganizations(w http.ResponseWriter, r *http.Request) {
+	orgs, err := h.storage.ListOrganizations(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to fetch organizations", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(orgs)
+}
+
+// GetOrganization gets a single organization
+func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	org, err := h.storage.GetOrganization(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Organization not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(org)
+}
+
+// ===== Repository Handlers =====
+
+// ListRepositories lists all repositories
+func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 20
+
+	repos, total, err := h.storage.ListRepositories(r.Context(), page, pageSize)
+	if err != nil {
+		http.Error(w, "Failed to fetch repositories", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(models.ListResponse[models.Repository]{
+		Data: repos,
+		Pagination: models.Pagination{
+			Page:     page,
+			PageSize: pageSize,
+			Total:    total,
+		},
+	})
+}
+
+// GetRepository gets a single repository
+func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	repo, err := h.storage.GetRepository(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(repo)
+}
+
+// filterRepositories filters repositories based on config settings (SYNC_REPOS and SYNC_LIMIT)
+func (h *Handler) filterRepositories(ghRepos []*gh.Repository) []*gh.Repository {
+	// If specific repos are configured, filter to only those
+	if len(h.config.SyncRepos) > 0 {
+		repoSet := make(map[string]bool)
+		for _, repo := range h.config.SyncRepos {
+			repoSet[repo] = true
+		}
+
+		var filtered []*gh.Repository
+		for _, repo := range ghRepos {
+			if repoSet[repo.GetFullName()] {
+				filtered = append(filtered, repo)
+			}
+		}
+		ghRepos = filtered
+		log.Info().Int("filtered", len(filtered)).Strs("repos", h.config.SyncRepos).Msg("Filtered to specific repositories")
+	}
+
+	// Apply limit if configured
+	if h.config.SyncLimit > 0 && len(ghRepos) > h.config.SyncLimit {
+		log.Info().Int("limit", h.config.SyncLimit).Int("total", len(ghRepos)).Msg("Limiting repositories to sync")
+		ghRepos = ghRepos[:h.config.SyncLimit]
+	}
+
+	return ghRepos
+}
+
+// SyncRepositories starts a background sync of repositories from GitHub
+// Returns immediately with 202 Accepted, progress is sent via WebSocket
+func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Copy user token for background goroutine
+	accessToken := user.AccessToken
+
+	// Return immediately - sync runs in background
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "started",
+		"message": "Sync started, progress will be sent via WebSocket",
+	})
+
+	// Run sync in background goroutine
+	go h.runSync(accessToken)
+}
+
+// runSync performs the actual sync operation in the background
+func (h *Handler) runSync(accessToken string) {
+	ctx := context.Background()
+
+	// Create GitHub client with user's token
+	token := &oauth2.Token{AccessToken: accessToken}
+	client := h.ghClient.GetUserClient(ctx, token)
+
+	// Fetch user's repositories from GitHub
+	ghRepos, err := h.ghClient.ListUserRepositories(ctx, client)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to fetch repositories from GitHub")
+		h.wsHub.BroadcastSyncError("Failed to fetch repositories from GitHub")
+		return
+	}
+
+	// Apply filters from config
+	ghRepos = h.filterRepositories(ghRepos)
+
+	total := len(ghRepos)
+	syncedRepos := 0
+	syncedWorkflows := 0
+	syncedRuns := 0
+
+	// Broadcast sync start
+	h.wsHub.BroadcastSyncStart(total)
+
+	for i, ghRepo := range ghRepos {
+		// Broadcast progress
+		h.wsHub.BroadcastSyncProgress(i, total, ghRepo.GetFullName())
+
+		// Convert and save repository
+		repo := &models.Repository{
+			GitHubID:      ghRepo.GetID(),
+			Name:          ghRepo.GetName(),
+			FullName:      ghRepo.GetFullName(),
+			DefaultBranch: ghRepo.GetDefaultBranch(),
+			HTMLURL:       ghRepo.GetHTMLURL(),
+			IsPrivate:     ghRepo.GetPrivate(),
+			IsActive:      true,
+		}
+		if ghRepo.Description != nil {
+			repo.Description = ghRepo.Description
+		}
+
+		savedRepo, err := h.storage.UpsertRepository(ctx, repo)
+		if err != nil {
+			log.Error().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to save repository")
+			continue
+		}
+		syncedRepos++
+
+		// Fetch and save workflows for this repository
+		owner := ghRepo.GetOwner().GetLogin()
+		repoName := ghRepo.GetName()
+
+		ghWorkflows, err := h.ghClient.ListWorkflows(ctx, client, owner, repoName)
+		if err != nil {
+			log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflows")
+			continue
+		}
+
+		// Build a map of GitHub workflow ID to internal workflow ID
+		workflowIDMap := make(map[int64]int)
+
+		for _, ghWorkflow := range ghWorkflows {
+			workflow := &models.Workflow{
+				GitHubID: ghWorkflow.GetID(),
+				RepoID:   savedRepo.ID,
+				Name:     ghWorkflow.GetName(),
+				Path:     ghWorkflow.GetPath(),
+				State:    ghWorkflow.GetState(),
+			}
+			if ghWorkflow.BadgeURL != nil {
+				workflow.BadgeURL = ghWorkflow.BadgeURL
+			}
+			if ghWorkflow.HTMLURL != nil {
+				workflow.HTMLURL = ghWorkflow.HTMLURL
+			}
+
+			savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflow)
+			if err != nil {
+				log.Error().Err(err).Str("workflow", ghWorkflow.GetName()).Msg("Failed to save workflow")
+				continue
+			}
+			syncedWorkflows++
+			workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
+		}
+
+		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
+		ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
+		if err != nil {
+			log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflow runs")
+			continue
+		}
+
+		for _, ghRun := range ghRuns {
+			// Look up the internal workflow ID
+			workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
+			if !ok {
+				continue
+			}
+
+			run := &models.WorkflowRun{
+				GitHubID:   ghRun.GetID(),
+				WorkflowID: workflowID,
+				RepoID:     savedRepo.ID,
+				RunNumber:  ghRun.GetRunNumber(),
+				Name:       ghRun.GetName(),
+				Status:     ghRun.GetStatus(),
+				Event:      ghRun.GetEvent(),
+				Branch:     ghRun.GetHeadBranch(),
+				CommitSHA:  ghRun.GetHeadSHA(),
+				ActorLogin: ghRun.GetActor().GetLogin(),
+				HTMLURL:    ghRun.GetHTMLURL(),
+				StartedAt:  ghRun.GetRunStartedAt().Time,
+			}
+
+			if ghRun.Conclusion != nil {
+				run.Conclusion = ghRun.Conclusion
+			}
+			if ghRun.GetActor() != nil {
+				avatar := ghRun.GetActor().GetAvatarURL()
+				run.ActorAvatar = &avatar
+			}
+			if !ghRun.GetUpdatedAt().IsZero() && ghRun.GetStatus() == "completed" {
+				completedAt := ghRun.GetUpdatedAt().Time
+				run.CompletedAt = &completedAt
+				duration := int(completedAt.Sub(run.StartedAt).Seconds())
+				run.DurationSeconds = &duration
+			}
+
+			if _, err := h.storage.UpsertRun(ctx, run); err != nil {
+				log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
+				continue
+			}
+			syncedRuns++
+		}
+	}
+
+	log.Info().
+		Int("repositories", syncedRepos).
+		Int("workflows", syncedWorkflows).
+		Int("runs", syncedRuns).
+		Msg("Sync completed")
+
+	// Broadcast sync complete
+	h.wsHub.BroadcastSyncComplete(syncedRepos, syncedWorkflows, syncedRuns)
+}
+
+// ===== Workflow Handlers =====
+
+// ListWorkflows lists all workflows
+func (h *Handler) ListWorkflows(w http.ResponseWriter, r *http.Request) {
+	var repoID *int
+	if repoIDStr := r.URL.Query().Get("repo_id"); repoIDStr != "" {
+		id, _ := strconv.Atoi(repoIDStr)
+		repoID = &id
+	}
+
+	workflows, err := h.storage.ListWorkflows(r.Context(), repoID)
+	if err != nil {
+		http.Error(w, "Failed to fetch workflows", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(workflows)
+}
+
+// GetWorkflow gets a single workflow
+func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	wf, err := h.storage.GetWorkflow(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(wf)
+}
+
+// GetWorkflowRuns gets runs for a workflow
+func (h *Handler) GetWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	h.listRunsWithFilter(w, r, &models.RunFilters{WorkflowID: id})
+}
+
+// ===== Run Handlers =====
+
+// ListRuns lists all workflow runs
+func (h *Handler) ListRuns(w http.ResponseWriter, r *http.Request) {
+	h.listRunsWithFilter(w, r, nil)
+}
+
+func (h *Handler) listRunsWithFilter(w http.ResponseWriter, r *http.Request, baseFilters *models.RunFilters) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize := 50
+
+	// Build filters
+	filters := &models.RunFilters{}
+	if baseFilters != nil {
+		*filters = *baseFilters
+	}
+
+	if status := r.URL.Query().Get("status"); status != "" {
+		filters.Status = status
+	}
+	if conclusion := r.URL.Query().Get("conclusion"); conclusion != "" {
+		filters.Conclusion = conclusion
+	}
+	if branch := r.URL.Query().Get("branch"); branch != "" {
+		filters.Branch = branch
+	}
+
+	runs, total, err := h.storage.ListRuns(r.Context(), filters, page, pageSize)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to fetch runs")
+		http.Error(w, "Failed to fetch runs", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(models.ListResponse[models.WorkflowRun]{
+		Data: runs,
+		Pagination: models.Pagination{
+			Page:     page,
+			PageSize: pageSize,
+			Total:    total,
+		},
+	})
+}
+
+// GetRun gets a single run
+func (h *Handler) GetRun(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(run)
+}
+
+// GetRunJobs gets jobs for a run
+func (h *Handler) GetRunJobs(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	jobs, err := h.storage.ListJobsForRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Failed to fetch jobs", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(jobs)
+}
+
+// GetRunLogs gets logs URL for a run
+func (h *Handler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
+	// For now, return a placeholder
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Logs retrieval requires GitHub App installation token",
+	})
+}
+
+// RerunWorkflow reruns a workflow
+func (h *Handler) RerunWorkflow(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// CancelRun cancels a workflow run
+func (h *Handler) CancelRun(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// ===== DevOps Metrics Handlers =====
+
+// GetDevOpsMetrics returns all DevOps performance metrics
+func (h *Handler) GetDevOpsMetrics(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "30d"
+	}
+
+	days := 30
+	switch period {
+	case "7d":
+		days = 7
+	case "30d":
+		days = 30
+	case "90d":
+		days = 90
+	}
+
+	startDate := time.Now().AddDate(0, 0, -days)
+	endDate := time.Now()
+
+	metrics, err := h.storage.GetDevOpsMetrics(r.Context(), startDate, endDate)
+	if err != nil {
+		http.Error(w, "Failed to fetch DevOps metrics", http.StatusInternalServerError)
+		return
+	}
+
+	metrics.Period = period
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// GetDeploymentFrequency returns deployment frequency metric
+func (h *Handler) GetDeploymentFrequency(w http.ResponseWriter, r *http.Request) {
+	h.GetDevOpsMetrics(w, r)
+}
+
+// GetLeadTime returns lead time metric
+func (h *Handler) GetLeadTime(w http.ResponseWriter, r *http.Request) {
+	h.GetDevOpsMetrics(w, r)
+}
+
+// GetChangeFailureRate returns change failure rate metric
+func (h *Handler) GetChangeFailureRate(w http.ResponseWriter, r *http.Request) {
+	h.GetDevOpsMetrics(w, r)
+}
+
+// GetMTTR returns MTTR metric
+func (h *Handler) GetMTTR(w http.ResponseWriter, r *http.Request) {
+	h.GetDevOpsMetrics(w, r)
+}
+
+// ===== Dashboard Handlers =====
+
+// GetDashboardSummary returns dashboard summary
+func (h *Handler) GetDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := h.storage.GetDashboardSummary(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to fetch dashboard summary", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(summary)
+}
+
+// GetTrends returns trend data
+func (h *Handler) GetTrends(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	if days <= 0 {
+		days = 30
+	}
+
+	trends, err := h.storage.GetTrends(r.Context(), days)
+	if err != nil {
+		http.Error(w, "Failed to fetch trends", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"trends": trends,
+	})
+}
+
+// ===== Helper Functions =====
+
+func (h *Handler) getUserFromContext(ctx context.Context) *models.User {
+	user, _ := ctx.Value(userContextKey).(*models.User)
+	return user
+}
+
+func (h *Handler) convertWorkflowRun(run *gh.WorkflowRun, repo *gh.Repository) *models.WorkflowRun {
+	result := &models.WorkflowRun{
+		GitHubID:    run.GetID(),
+		RunNumber:   run.GetRunNumber(),
+		Name:        run.GetName(),
+		Status:      run.GetStatus(),
+		Event:       run.GetEvent(),
+		Branch:      run.GetHeadBranch(),
+		CommitSHA:   run.GetHeadSHA(),
+		ActorLogin:  run.GetActor().GetLogin(),
+		HTMLURL:     run.GetHTMLURL(),
+		StartedAt:   run.GetRunStartedAt().Time,
+	}
+
+	if run.Conclusion != nil {
+		result.Conclusion = run.Conclusion
+	}
+	if run.GetActor() != nil {
+		avatar := run.GetActor().GetAvatarURL()
+		result.ActorAvatar = &avatar
+	}
+	if !run.GetUpdatedAt().IsZero() {
+		completedAt := run.GetUpdatedAt().Time
+		result.CompletedAt = &completedAt
+		duration := int(completedAt.Sub(result.StartedAt).Seconds())
+		result.DurationSeconds = &duration
+	}
+
+	return result
+}
+
+func generateState() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func generateSessionID() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
