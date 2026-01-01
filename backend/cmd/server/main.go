@@ -139,8 +139,13 @@ func main() {
 			r.Get("/runs/{id}", h.GetRun)
 			r.Get("/runs/{id}/jobs", h.GetRunJobs)
 			r.Get("/runs/{id}/logs", h.GetRunLogs)
+			r.Get("/runs/{id}/annotations", h.GetRunAnnotations)
+			r.Get("/runs/{id}/workflow-definition", h.GetRunWorkflowDefinition)
 			r.Post("/runs/{id}/rerun", h.RerunWorkflow)
 			r.Post("/runs/{id}/cancel", h.CancelRun)
+
+			// Jobs
+			r.Get("/jobs/{id}/logs", h.GetJobLogs)
 
 			// DevOps Metrics
 			r.Route("/metrics", func(r chi.Router) {

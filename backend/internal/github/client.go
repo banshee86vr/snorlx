@@ -371,6 +371,15 @@ func (c *Client) GetWorkflowRunLogs(ctx context.Context, client *github.Client, 
 	return url.String(), nil
 }
 
+// GetWorkflowJobLogs gets the logs URL for a specific job
+func (c *Client) GetWorkflowJobLogs(ctx context.Context, client *github.Client, owner, repo string, jobID int64) (string, error) {
+	url, _, err := client.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 2)
+	if err != nil {
+		return "", err
+	}
+	return url.String(), nil
+}
+
 // RerunWorkflow reruns a workflow
 func (c *Client) RerunWorkflow(ctx context.Context, client *github.Client, owner, repo string, runID int64) error {
 	_, err := client.Actions.RerunWorkflowByID(ctx, owner, repo, runID)
@@ -381,6 +390,174 @@ func (c *Client) RerunWorkflow(ctx context.Context, client *github.Client, owner
 func (c *Client) CancelWorkflowRun(ctx context.Context, client *github.Client, owner, repo string, runID int64) error {
 	_, err := client.Actions.CancelWorkflowRunByID(ctx, owner, repo, runID)
 	return err
+}
+
+// Annotation represents a check run annotation or error message
+type Annotation struct {
+	Path            string `json:"path"`
+	StartLine       int    `json:"start_line"`
+	EndLine         int    `json:"end_line"`
+	AnnotationLevel string `json:"annotation_level"` // notice, warning, failure
+	Message         string `json:"message"`
+	Title           string `json:"title,omitempty"`
+	RawDetails      string `json:"raw_details,omitempty"`
+}
+
+// GetWorkflowRunAnnotations gets annotations for a workflow run by checking its check suite
+func (c *Client) GetWorkflowRunAnnotations(ctx context.Context, client *github.Client, owner, repo string, runID int64) ([]Annotation, error) {
+	var annotations []Annotation
+
+	// First, get the workflow run to find its check_suite_id
+	run, _, err := client.Actions.GetWorkflowRunByID(ctx, owner, repo, runID)
+	if err != nil {
+		log.Error().Err(err).Int64("run_id", runID).Msg("Failed to get workflow run")
+		return nil, err
+	}
+
+	log.Debug().
+		Int64("run_id", runID).
+		Str("status", run.GetStatus()).
+		Str("conclusion", run.GetConclusion()).
+		Interface("check_suite_id", run.CheckSuiteID).
+		Msg("Got workflow run")
+
+	// Try to get check runs using the head SHA
+	headSHA := run.GetHeadSHA()
+	if headSHA != "" {
+		opts := &github.ListCheckRunsOptions{
+			ListOptions: github.ListOptions{PerPage: 100},
+		}
+		
+		checkRuns, _, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, headSHA, opts)
+		if err != nil {
+			log.Warn().Err(err).Str("sha", headSHA).Msg("Failed to list check runs for ref")
+		} else {
+			log.Debug().Int("check_runs_count", len(checkRuns.CheckRuns)).Msg("Found check runs")
+			
+			for _, checkRun := range checkRuns.CheckRuns {
+				if checkRun.ID == nil {
+					continue
+				}
+
+				// Check if this check run has a failed conclusion and output summary/text
+				if checkRun.GetConclusion() == "failure" || checkRun.GetConclusion() == "cancelled" {
+					output := checkRun.GetOutput()
+					if output != nil {
+						// Add output summary as an annotation if present
+						if output.GetSummary() != "" {
+							annotations = append(annotations, Annotation{
+								AnnotationLevel: "failure",
+								Title:           checkRun.GetName(),
+								Message:         output.GetSummary(),
+							})
+						}
+						// Add output text if different from summary
+						if output.GetText() != "" && output.GetText() != output.GetSummary() {
+							annotations = append(annotations, Annotation{
+								AnnotationLevel: "failure",
+								Title:           checkRun.GetName() + " - Details",
+								Message:         output.GetText(),
+							})
+						}
+					}
+				}
+
+				// Get annotations for this check run
+				annotationOpts := &github.ListOptions{PerPage: 100}
+				checkAnnotations, _, err := client.Checks.ListCheckRunAnnotations(ctx, owner, repo, *checkRun.ID, annotationOpts)
+				if err != nil {
+					log.Warn().Err(err).Int64("check_run_id", *checkRun.ID).Msg("Failed to get annotations for check run")
+					continue
+				}
+
+				log.Debug().Int64("check_run_id", *checkRun.ID).Int("annotations_count", len(checkAnnotations)).Msg("Got annotations")
+
+				for _, a := range checkAnnotations {
+					annotation := Annotation{
+						AnnotationLevel: a.GetAnnotationLevel(),
+						Message:         a.GetMessage(),
+					}
+					if a.Path != nil {
+						annotation.Path = *a.Path
+					}
+					if a.StartLine != nil {
+						annotation.StartLine = *a.StartLine
+					}
+					if a.EndLine != nil {
+						annotation.EndLine = *a.EndLine
+					}
+					if a.Title != nil {
+						annotation.Title = *a.Title
+					}
+					if a.RawDetails != nil {
+						annotation.RawDetails = *a.RawDetails
+					}
+					annotations = append(annotations, annotation)
+				}
+			}
+		}
+	}
+
+	// If still no annotations and the run failed, try to get job-level errors
+	if len(annotations) == 0 && run.GetConclusion() == "failure" {
+		log.Debug().Msg("No annotations found, checking for job-level errors")
+		
+		// Try to get jobs for this run - they might have error info
+		jobs, _, err := client.Actions.ListWorkflowJobs(ctx, owner, repo, runID, &github.ListWorkflowJobsOptions{
+			ListOptions: github.ListOptions{PerPage: 100},
+		})
+		if err == nil && jobs != nil {
+			for _, job := range jobs.Jobs {
+				if job.GetConclusion() == "failure" {
+					// Check each step for failures
+					for _, step := range job.Steps {
+						if step.GetConclusion() == "failure" {
+							annotations = append(annotations, Annotation{
+								AnnotationLevel: "failure",
+								Title:           job.GetName() + " / " + step.GetName(),
+								Message:         "Step failed with conclusion: " + step.GetConclusion(),
+							})
+						}
+					}
+				}
+			}
+		}
+		
+		// Try to get check suite info if still no annotations
+		if len(annotations) == 0 && run.CheckSuiteID != nil && *run.CheckSuiteID != 0 {
+			checkSuite, _, err := client.Checks.GetCheckSuite(ctx, owner, repo, *run.CheckSuiteID)
+			if err == nil && checkSuite != nil {
+				if checkSuite.GetConclusion() == "failure" {
+					log.Debug().
+						Int64("check_suite_id", *run.CheckSuiteID).
+						Str("conclusion", checkSuite.GetConclusion()).
+						Msg("Check suite failed without annotations")
+				}
+			}
+		}
+	}
+
+	return annotations, nil
+}
+
+// GetWorkflowContent fetches the workflow file content from GitHub
+func (c *Client) GetWorkflowContent(ctx context.Context, client *github.Client, owner, repo, path, ref string) ([]byte, error) {
+	fileContent, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, &github.RepositoryContentGetOptions{
+		Ref: ref,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if fileContent == nil {
+		return nil, errors.New("workflow file not found")
+	}
+	
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return nil, err
+	}
+	
+	return []byte(content), nil
 }
 
 // ParseWebhookEvent parses a webhook event

@@ -1,22 +1,27 @@
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { FolderGit2, Workflow, Lock, Globe } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { FolderGit2, Workflow, Lock, Globe, Search, X } from 'lucide-react';
 import { repositoriesApi } from '../services/api';
 
 export function Repositories() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const page = Number(searchParams.get('page')) || 1;
+  const [search, setSearch] = useState('');
 
+  // Fetch all repositories (first page with large limit via server-side search if needed)
   const { data, isLoading } = useQuery({
-    queryKey: ['repositories', page],
-    queryFn: () => repositoriesApi.list(page),
+    queryKey: ['repositories'],
+    queryFn: () => repositoriesApi.list(1),
   });
 
-  const handlePageChange = (newPage: number) => {
-    const params = new URLSearchParams(searchParams);
-    params.set('page', String(newPage));
-    setSearchParams(params);
-  };
+  const filteredRepositories = useMemo(() => {
+    if (!data?.data || !search.trim()) return data?.data;
+    const searchLower = search.toLowerCase();
+    return data.data.filter(
+      (repo) =>
+        repo.name.toLowerCase().includes(searchLower) ||
+        repo.full_name.toLowerCase().includes(searchLower)
+    );
+  }, [data?.data, search]);
 
   if (isLoading) {
     return <RepositoriesSkeleton />;
@@ -24,16 +29,37 @@ export function Repositories() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Repositories</h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
-          All repositories with GitHub Actions workflows
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Repositories</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            All repositories with GitHub Actions workflows
+          </p>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search repositories..."
+            className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border border-gray-300 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {data?.data && data.data.length > 0 ? (
-          data.data.map((repo) => (
+        {filteredRepositories && filteredRepositories.length > 0 ? (
+          filteredRepositories.map((repo) => (
             <Link
               key={repo.id}
               to={`/repositories/${repo.id}`}
@@ -86,32 +112,6 @@ export function Repositories() {
         )}
       </div>
 
-      {/* Pagination */}
-      {data?.pagination && data.pagination.total > data.pagination.page_size && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Showing {((page - 1) * data.pagination.page_size) + 1} to{' '}
-            {Math.min(page * data.pagination.page_size, data.pagination.total)} of{' '}
-            {data.pagination.total} repositories
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => handlePageChange(page - 1)}
-              disabled={page === 1}
-              className="btn-secondary disabled:opacity-50"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => handlePageChange(page + 1)}
-              disabled={page * data.pagination.page_size >= data.pagination.total}
-              className="btn-secondary disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -21,7 +21,7 @@ type Storage interface {
 	UpsertOrganization(ctx context.Context, org *models.Organization) (*models.Organization, error)
 
 	// Repositories
-	ListRepositories(ctx context.Context, page, pageSize int) ([]models.Repository, int, error)
+	ListRepositories(ctx context.Context, page, pageSize int, search string) ([]models.Repository, int, error)
 	GetRepository(ctx context.Context, id int) (*models.Repository, error)
 	GetRepositoryByGitHubID(ctx context.Context, githubID int64) (*models.Repository, error)
 	UpsertRepository(ctx context.Context, repo *models.Repository) (*models.Repository, error)

@@ -184,6 +184,7 @@ export function Header() {
 							Snorlx Dashboard
 						</span>
 					</div>
+
 					<nav className="px-2 py-2">
 						{mobileNavigation.map((item) => (
 							<NavLink

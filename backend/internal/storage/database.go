@@ -2,12 +2,15 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"snorlx/backend/internal/models"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -136,25 +139,48 @@ func (d *DatabaseStorage) UpsertOrganization(ctx context.Context, org *models.Or
 
 // ===== Repositories =====
 
-func (d *DatabaseStorage) ListRepositories(ctx context.Context, page, pageSize int) ([]models.Repository, int, error) {
+func (d *DatabaseStorage) ListRepositories(ctx context.Context, page, pageSize int, search string) ([]models.Repository, int, error) {
 	offset := (page - 1) * pageSize
+	searchPattern := "%" + strings.ToLower(strings.TrimSpace(search)) + "%"
 
-	// Get total count
+	// Get total count with search filter
 	var total int
-	d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true").Scan(&total)
+	if search != "" {
+		d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true AND (LOWER(name) LIKE $1 OR LOWER(full_name) LIKE $1)", searchPattern).Scan(&total)
+	} else {
+		d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true").Scan(&total)
+	}
 
-	rows, err := d.pool.Query(ctx, `
-		SELECT r.id, r.github_id, r.org_id, r.name, r.full_name, r.description, 
-		       r.default_branch, r.html_url, r.is_private, r.is_active, r.settings,
-		       r.created_at, r.updated_at,
-		       COUNT(DISTINCT w.id) as workflow_count
-		FROM repositories r
-		LEFT JOIN workflows w ON w.repo_id = r.id
-		WHERE r.is_active = true
-		GROUP BY r.id
-		ORDER BY r.full_name
-		LIMIT $1 OFFSET $2
-	`, pageSize, offset)
+	var rows pgx.Rows
+	var err error
+
+	if search != "" {
+		rows, err = d.pool.Query(ctx, `
+			SELECT r.id, r.github_id, r.org_id, r.name, r.full_name, r.description, 
+			       r.default_branch, r.html_url, r.is_private, r.is_active, r.settings,
+			       r.created_at, r.updated_at,
+			       COUNT(DISTINCT w.id) as workflow_count
+			FROM repositories r
+			LEFT JOIN workflows w ON w.repo_id = r.id
+			WHERE r.is_active = true AND (LOWER(r.name) LIKE $1 OR LOWER(r.full_name) LIKE $1)
+			GROUP BY r.id
+			ORDER BY r.full_name
+			LIMIT $2 OFFSET $3
+		`, searchPattern, pageSize, offset)
+	} else {
+		rows, err = d.pool.Query(ctx, `
+			SELECT r.id, r.github_id, r.org_id, r.name, r.full_name, r.description, 
+			       r.default_branch, r.html_url, r.is_private, r.is_active, r.settings,
+			       r.created_at, r.updated_at,
+			       COUNT(DISTINCT w.id) as workflow_count
+			FROM repositories r
+			LEFT JOIN workflows w ON w.repo_id = r.id
+			WHERE r.is_active = true
+			GROUP BY r.id
+			ORDER BY r.full_name
+			LIMIT $1 OFFSET $2
+		`, pageSize, offset)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -258,9 +284,32 @@ func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]mod
 	query := `
 		SELECT w.id, w.github_id, w.repo_id, w.name, w.path, w.state, w.badge_url, w.html_url,
 		       w.created_at, w.updated_at,
-		       r.full_name as repo_full_name
+		       r.full_name as repo_full_name,
+		       lr.id as last_run_id, lr.github_id as last_run_github_id, lr.run_number as last_run_number,
+		       lr.name as last_run_name, lr.status as last_run_status, lr.conclusion as last_run_conclusion,
+		       lr.event as last_run_event, lr.branch as last_run_branch, lr.commit_sha as last_run_commit_sha,
+		       lr.actor_login as last_run_actor, lr.html_url as last_run_url,
+		       lr.started_at as last_run_started_at, lr.completed_at as last_run_completed_at,
+		       lr.duration_seconds as last_run_duration,
+		       stats.total_runs, stats.success_rate, stats.avg_duration
 		FROM workflows w
 		JOIN repositories r ON r.id = w.repo_id
+		LEFT JOIN LATERAL (
+			SELECT wr.id, wr.github_id, wr.run_number, wr.name, wr.status, wr.conclusion,
+			       wr.event, wr.branch, wr.commit_sha, wr.actor_login, wr.html_url,
+			       wr.started_at, wr.completed_at, wr.duration_seconds
+			FROM workflow_runs wr
+			WHERE wr.workflow_id = w.id
+			ORDER BY wr.started_at DESC
+			LIMIT 1
+		) lr ON true
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) as total_runs,
+			       COALESCE(100.0 * COUNT(*) FILTER (WHERE conclusion = 'success') / NULLIF(COUNT(*) FILTER (WHERE conclusion IS NOT NULL), 0), 0) as success_rate,
+			       COALESCE(AVG(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL), 0) as avg_duration
+			FROM workflow_runs wr
+			WHERE wr.workflow_id = w.id
+		) stats ON true
 		WHERE 1=1
 	`
 	args := []interface{}{}
@@ -281,14 +330,70 @@ func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]mod
 	for rows.Next() {
 		var wf models.Workflow
 		var repoFullName string
+		var lastRunID, lastRunGitHubID, lastRunNumber sql.NullInt64
+		var lastRunName, lastRunStatus, lastRunConclusion, lastRunEvent, lastRunBranch, lastRunCommitSHA, lastRunActor, lastRunURL sql.NullString
+		var lastRunStartedAt, lastRunCompletedAt sql.NullTime
+		var lastRunDuration sql.NullInt32
+		var totalRuns sql.NullInt64
+		var successRate, avgDuration sql.NullFloat64
+
 		err := rows.Scan(
 			&wf.ID, &wf.GitHubID, &wf.RepoID, &wf.Name, &wf.Path, &wf.State, &wf.BadgeURL, &wf.HTMLURL,
 			&wf.CreatedAt, &wf.UpdatedAt, &repoFullName,
+			&lastRunID, &lastRunGitHubID, &lastRunNumber,
+			&lastRunName, &lastRunStatus, &lastRunConclusion,
+			&lastRunEvent, &lastRunBranch, &lastRunCommitSHA,
+			&lastRunActor, &lastRunURL,
+			&lastRunStartedAt, &lastRunCompletedAt, &lastRunDuration,
+			&totalRuns, &successRate, &avgDuration,
 		)
 		if err != nil {
 			continue
 		}
 		wf.Repository = &models.Repository{FullName: repoFullName}
+
+		// Populate stats
+		if totalRuns.Valid {
+			wf.TotalRuns = int(totalRuns.Int64)
+		}
+		if successRate.Valid {
+			wf.SuccessRate = successRate.Float64
+		}
+		if avgDuration.Valid {
+			wf.AvgDuration = int(avgDuration.Float64)
+		}
+
+		// Populate last run if exists
+		if lastRunID.Valid {
+			wf.LastRun = &models.WorkflowRun{
+				ID:         int(lastRunID.Int64),
+				GitHubID:   lastRunGitHubID.Int64,
+				WorkflowID: wf.ID,
+				RepoID:     wf.RepoID,
+				RunNumber:  int(lastRunNumber.Int64),
+				Name:       lastRunName.String,
+				Status:     lastRunStatus.String,
+				Event:      lastRunEvent.String,
+				Branch:     lastRunBranch.String,
+				CommitSHA:  lastRunCommitSHA.String,
+				ActorLogin: lastRunActor.String,
+				HTMLURL:    lastRunURL.String,
+			}
+			if lastRunConclusion.Valid {
+				wf.LastRun.Conclusion = &lastRunConclusion.String
+			}
+			if lastRunStartedAt.Valid {
+				wf.LastRun.StartedAt = lastRunStartedAt.Time
+			}
+			if lastRunCompletedAt.Valid {
+				wf.LastRun.CompletedAt = &lastRunCompletedAt.Time
+			}
+			if lastRunDuration.Valid {
+				dur := int(lastRunDuration.Int32)
+				wf.LastRun.DurationSeconds = &dur
+			}
+		}
+
 		workflows = append(workflows, wf)
 	}
 

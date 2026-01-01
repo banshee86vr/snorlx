@@ -145,14 +145,26 @@ func (m *MemoryStorage) UpsertOrganization(ctx context.Context, org *models.Orga
 
 // ===== Repositories =====
 
-func (m *MemoryStorage) ListRepositories(ctx context.Context, page, pageSize int) ([]models.Repository, int, error) {
+func (m *MemoryStorage) ListRepositories(ctx context.Context, page, pageSize int, search string) ([]models.Repository, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Filter active repos
+	// Normalize search query
+	searchLower := strings.ToLower(strings.TrimSpace(search))
+
+	// Filter active repos and apply search
 	var repos []models.Repository
 	for _, repo := range m.repositories {
 		if repo.IsActive {
+			// Apply search filter if provided
+			if searchLower != "" {
+				nameLower := strings.ToLower(repo.Name)
+				fullNameLower := strings.ToLower(repo.FullName)
+				if !strings.Contains(nameLower, searchLower) && !strings.Contains(fullNameLower, searchLower) {
+					continue
+				}
+			}
+
 			// Count workflows for this repo
 			workflowCount := 0
 			for _, wf := range m.workflows {
@@ -277,6 +289,40 @@ func (m *MemoryStorage) ListWorkflows(ctx context.Context, repoID *int) ([]model
 		if repo, ok := m.repositories[wf.RepoID]; ok {
 			wfCopy.Repository = &models.Repository{FullName: repo.FullName}
 		}
+
+		// Find the last run and compute stats for this workflow
+		var lastRun *models.WorkflowRun
+		var lastRunTime time.Time
+		var totalRuns, successfulRuns, completedRuns int
+		var totalDuration int
+		for _, run := range m.runs {
+			if run.WorkflowID == wf.ID {
+				totalRuns++
+				if lastRun == nil || run.StartedAt.After(lastRunTime) {
+					runCopy := *run
+					lastRun = &runCopy
+					lastRunTime = run.StartedAt
+				}
+				if run.Conclusion != nil {
+					completedRuns++
+					if *run.Conclusion == "success" {
+						successfulRuns++
+					}
+				}
+				if run.DurationSeconds != nil {
+					totalDuration += *run.DurationSeconds
+				}
+			}
+		}
+		wfCopy.LastRun = lastRun
+		wfCopy.TotalRuns = totalRuns
+		if completedRuns > 0 {
+			wfCopy.SuccessRate = float64(successfulRuns) / float64(completedRuns) * 100.0
+		}
+		if totalRuns > 0 {
+			wfCopy.AvgDuration = totalDuration / totalRuns
+		}
+
 		workflows = append(workflows, wfCopy)
 	}
 

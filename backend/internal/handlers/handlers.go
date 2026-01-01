@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"snorlx/backend/internal/config"
@@ -20,6 +21,7 @@ import (
 	gh "github.com/google/go-github/v60/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
+	"gopkg.in/yaml.v3"
 )
 
 // Handler contains all HTTP handlers
@@ -350,8 +352,9 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	pageSize := 20
+	search := r.URL.Query().Get("search")
 
-	repos, total, err := h.storage.ListRepositories(r.Context(), page, pageSize)
+	repos, total, err := h.storage.ListRepositories(r.Context(), page, pageSize, search)
 	if err != nil {
 		http.Error(w, "Failed to fetch repositories", http.StatusInternalServerError)
 		return
@@ -679,17 +682,71 @@ func (h *Handler) GetRun(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(run)
 }
 
-// GetRunJobs gets jobs for a run
+// GetRunJobs gets jobs for a run - fetches from GitHub on-demand
 func (h *Handler) GetRunJobs(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 
+	// First, try to get cached jobs from storage
 	jobs, err := h.storage.ListJobsForRun(r.Context(), id)
-	if err != nil {
-		http.Error(w, "Failed to fetch jobs", http.StatusInternalServerError)
+	if err == nil && len(jobs) > 0 {
+		json.NewEncoder(w).Encode(jobs)
 		return
 	}
 
-	json.NewEncoder(w).Encode(jobs)
+	// No cached jobs, fetch from GitHub
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the run to find GitHub ID and repo
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the repository to find owner/repo name
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse owner and repo name from full_name (e.g., "owner/repo")
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	// Create GitHub client with user's token
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	// Fetch jobs from GitHub
+	ghJobs, err := h.ghClient.ListWorkflowJobs(r.Context(), client, owner, repoName, run.GitHubID)
+	if err != nil {
+		log.Error().Err(err).Int64("run_github_id", run.GitHubID).Msg("Failed to fetch jobs from GitHub")
+		// Return empty array instead of error if GitHub fetch fails
+		json.NewEncoder(w).Encode([]models.WorkflowJob{})
+		return
+	}
+
+	// Convert and save jobs
+	var savedJobs []models.WorkflowJob
+	for _, ghJob := range ghJobs {
+		job := h.convertWorkflowJob(ghJob, id)
+		if _, err := h.storage.UpsertJob(r.Context(), job); err != nil {
+			log.Error().Err(err).Int64("job_id", ghJob.GetID()).Msg("Failed to save job")
+			continue
+		}
+		savedJobs = append(savedJobs, *job)
+	}
+
+	json.NewEncoder(w).Encode(savedJobs)
 }
 
 // GetRunLogs gets logs URL for a run
@@ -698,6 +755,221 @@ func (h *Handler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Logs retrieval requires GitHub App installation token",
 	})
+}
+
+// GetRunAnnotations fetches annotations for a run from GitHub
+func (h *Handler) GetRunAnnotations(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the run to find GitHub ID and repo
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the repository to find owner/repo name
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse owner and repo name from full_name
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	// Create GitHub client with user's token
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	// Fetch annotations from GitHub
+	annotations, err := h.ghClient.GetWorkflowRunAnnotations(r.Context(), client, owner, repoName, run.GitHubID)
+	if err != nil {
+		log.Error().Err(err).Int64("run_github_id", run.GitHubID).Msg("Failed to fetch run annotations from GitHub")
+		http.Error(w, "Failed to fetch annotations", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(annotations)
+}
+
+// GetJobLogs fetches logs for a specific job from GitHub
+func (h *Handler) GetJobLogs(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the job from storage
+	job, err := h.storage.GetJob(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the run to find the repo
+	run, err := h.storage.GetRun(r.Context(), job.RunID)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the repository
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse owner and repo name
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	// Create GitHub client with user's token
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	// Fetch job logs URL from GitHub
+	logsURL, err := h.ghClient.GetWorkflowJobLogs(r.Context(), client, owner, repoName, job.GitHubID)
+	if err != nil {
+		log.Error().Err(err).Int64("job_github_id", job.GitHubID).Msg("Failed to fetch job logs from GitHub")
+		http.Error(w, "Failed to fetch job logs", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"url": logsURL,
+	})
+}
+
+// WorkflowDefinition represents the parsed workflow YAML structure
+type WorkflowDefinition struct {
+	Jobs map[string]WorkflowJobDefinition `yaml:"jobs" json:"jobs"`
+}
+
+// WorkflowJobDefinition represents a job in the workflow YAML
+type WorkflowJobDefinition struct {
+	Name  string      `yaml:"name,omitempty" json:"name,omitempty"`
+	Needs interface{} `yaml:"needs,omitempty" json:"needs,omitempty"` // Can be string or []string
+}
+
+// JobDependency represents a job and its dependencies for the frontend
+type JobDependency struct {
+	JobID string   `json:"job_id"` // The job key in the YAML (e.g., "build", "test")
+	Name  string   `json:"name"`   // The display name (from 'name' field or job_id)
+	Needs []string `json:"needs"`  // List of job IDs this job depends on
+}
+
+// GetRunWorkflowDefinition fetches and parses the workflow YAML to extract job dependencies
+func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get the run to find workflow info
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the workflow to find the file path
+	workflow, err := h.storage.GetWorkflow(r.Context(), run.WorkflowID)
+	if err != nil {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the repository
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	// Parse owner and repo name
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	// Create GitHub client with user's token
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	// Fetch the workflow file content using the commit SHA from the run
+	content, err := h.ghClient.GetWorkflowContent(r.Context(), client, owner, repoName, workflow.Path, run.CommitSHA)
+	if err != nil {
+		log.Error().Err(err).Str("path", workflow.Path).Str("sha", run.CommitSHA).Msg("Failed to fetch workflow content")
+		// Return empty dependencies on error
+		json.NewEncoder(w).Encode([]JobDependency{})
+		return
+	}
+
+	// Parse the YAML
+	var workflowDef WorkflowDefinition
+	if err := yaml.Unmarshal(content, &workflowDef); err != nil {
+		log.Error().Err(err).Msg("Failed to parse workflow YAML")
+		json.NewEncoder(w).Encode([]JobDependency{})
+		return
+	}
+
+	// Extract job dependencies
+	dependencies := make([]JobDependency, 0, len(workflowDef.Jobs))
+	for jobID, jobDef := range workflowDef.Jobs {
+		dep := JobDependency{
+			JobID: jobID,
+			Name:  jobDef.Name,
+			Needs: []string{},
+		}
+
+		// Use jobID as name if name is not set
+		if dep.Name == "" {
+			dep.Name = jobID
+		}
+
+		// Parse needs - can be a single string or an array of strings
+		switch needs := jobDef.Needs.(type) {
+		case string:
+			if needs != "" {
+				dep.Needs = []string{needs}
+			}
+		case []interface{}:
+			for _, n := range needs {
+				if s, ok := n.(string); ok {
+					dep.Needs = append(dep.Needs, s)
+				}
+			}
+		}
+
+		dependencies = append(dependencies, dep)
+	}
+
+	json.NewEncoder(w).Encode(dependencies)
 }
 
 // RerunWorkflow reruns a workflow
@@ -826,6 +1098,60 @@ func (h *Handler) convertWorkflowRun(run *gh.WorkflowRun, repo *gh.Repository) *
 		result.CompletedAt = &completedAt
 		duration := int(completedAt.Sub(result.StartedAt).Seconds())
 		result.DurationSeconds = &duration
+	}
+
+	return result
+}
+
+func (h *Handler) convertWorkflowJob(job *gh.WorkflowJob, runID int) *models.WorkflowJob {
+	result := &models.WorkflowJob{
+		GitHubID:  job.GetID(),
+		RunID:     runID,
+		Name:      job.GetName(),
+		Status:    job.GetStatus(),
+		StartedAt: job.GetStartedAt().Time,
+	}
+
+	if job.Conclusion != nil {
+		result.Conclusion = job.Conclusion
+	}
+	if job.RunnerName != nil {
+		result.RunnerName = job.RunnerName
+	}
+	if job.RunnerGroupName != nil {
+		result.RunnerGroup = job.RunnerGroupName
+	}
+	if job.CompletedAt != nil && !job.GetCompletedAt().IsZero() {
+		completedAt := job.GetCompletedAt().Time
+		result.CompletedAt = &completedAt
+		duration := int(completedAt.Sub(result.StartedAt).Seconds())
+		result.DurationSeconds = &duration
+	}
+
+	// Convert labels
+	if len(job.Labels) > 0 {
+		labels := make([]interface{}, len(job.Labels))
+		for i, label := range job.Labels {
+			labels[i] = label
+		}
+		result.Labels = labels
+	}
+
+	// Convert steps
+	if len(job.Steps) > 0 {
+		steps := make([]interface{}, len(job.Steps))
+		for i, step := range job.Steps {
+			stepMap := map[string]interface{}{
+				"name":   step.GetName(),
+				"number": step.GetNumber(),
+				"status": step.GetStatus(),
+			}
+			if step.Conclusion != nil {
+				stepMap["conclusion"] = *step.Conclusion
+			}
+			steps[i] = stepMap
+		}
+		result.Steps = steps
 	}
 
 	return result

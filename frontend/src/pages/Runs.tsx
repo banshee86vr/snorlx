@@ -1,49 +1,68 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { Play, CheckCircle, XCircle, Clock, Loader2, ExternalLink, Filter } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Play, CheckCircle, XCircle, Clock, Loader2, ExternalLink, Filter, Search, X } from 'lucide-react';
 import { runsApi } from '../services/api';
 import { cn, formatRelativeTime, formatDuration, getStatusColor } from '../lib/utils';
 import type { RunFilters } from '../types';
 
 export function Runs() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState('');
   const [filters, setFilters] = useState<RunFilters>({
-    status: searchParams.get('status') || '',
-    conclusion: searchParams.get('conclusion') || '',
-    branch: searchParams.get('branch') || '',
+    status: '',
+    conclusion: '',
+    branch: '',
   });
-  const page = Number(searchParams.get('page')) || 1;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['runs', filters, page],
-    queryFn: () => runsApi.list(filters, page),
+    queryKey: ['runs', filters],
+    queryFn: () => runsApi.list(filters),
   });
 
   const handleFilterChange = (key: keyof RunFilters, value: string) => {
-    const newFilters = { ...filters, [key]: value };
-    setFilters(newFilters);
-    const params = new URLSearchParams();
-    Object.entries(newFilters).forEach(([k, v]) => {
-      if (v) params.set(k, String(v));
-    });
-    params.set('page', '1');
-    setSearchParams(params);
+    setFilters({ ...filters, [key]: value });
   };
 
-  const handlePageChange = (newPage: number) => {
-    const params = new URLSearchParams(searchParams);
-    params.set('page', String(newPage));
-    setSearchParams(params);
-  };
+  // Filter runs by search query (client-side) - only by run name or repository name
+  const filteredRuns = useMemo(() => {
+    if (!data?.data || !search.trim()) return data?.data;
+    const searchLower = search.toLowerCase();
+    return data.data.filter(
+      (run) =>
+        run.name.toLowerCase().includes(searchLower) ||
+        run.repository?.full_name?.toLowerCase().includes(searchLower) ||
+        run.repository?.name?.toLowerCase().includes(searchLower)
+    );
+  }, [data?.data, search]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Workflow Runs</h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
-          All workflow runs across your repositories
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Workflow Runs</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            All workflow runs across your repositories
+          </p>
+        </div>
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search runs..."
+            className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border border-gray-300 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
@@ -105,8 +124,8 @@ export function Runs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data?.data && data.data.length > 0 ? (
-                    data.data.map((run) => (
+                  {filteredRuns && filteredRuns.length > 0 ? (
+                    filteredRuns.map((run) => (
                       <tr key={run.id}>
                         <td>
                           <Link
@@ -169,32 +188,6 @@ export function Runs() {
               </table>
             </div>
 
-            {/* Pagination */}
-            {data?.pagination && data.pagination.total > data.pagination.page_size && (
-              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Showing {((page - 1) * data.pagination.page_size) + 1} to{' '}
-                  {Math.min(page * data.pagination.page_size, data.pagination.total)} of{' '}
-                  {data.pagination.total} runs
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handlePageChange(page - 1)}
-                    disabled={page === 1}
-                    className="btn-secondary disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => handlePageChange(page + 1)}
-                    disabled={page * data.pagination.page_size >= data.pagination.total}
-                    className="btn-secondary disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
           </>
         )}
       </div>
