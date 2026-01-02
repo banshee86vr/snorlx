@@ -96,6 +96,17 @@ export interface JobStep {
 	completed_at: string | null;
 }
 
+export interface RunStats {
+	total: number;
+	success: number;
+	failed: number;
+	in_progress: number;
+	queued: number;
+	cancelled: number;
+	success_rate: number;
+	total_duration_seconds: number;
+}
+
 export interface DashboardSummary {
 	repositories: {
 		total: number;
@@ -107,16 +118,8 @@ export interface DashboardSummary {
 		active: number;
 		disabled: number;
 	};
-	runs: {
-		total: number;
-		success: number;
-		failed: number;
-		in_progress: number;
-		queued: number;
-		cancelled: number;
-		success_rate: number;
-		total_duration_seconds: number;
-	};
+	runs: RunStats;
+	previous_runs: RunStats;
 	recent_runs: WorkflowRun[];
 	failed_runs: WorkflowRun[];
 }
@@ -155,4 +158,6 @@ export interface JobDependency {
 	job_id: string;
 	name: string;
 	needs: string[];
+	is_matrix?: boolean;
+	prefix?: string; // Prefix for job names (e.g., calling job name for reusable workflows)
 }

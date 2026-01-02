@@ -204,6 +204,7 @@ type DashboardSummary struct {
 	Repositories     RepositorySummary `json:"repositories"`
 	Workflows        WorkflowSummary   `json:"workflows"`
 	Runs             RunSummary        `json:"runs"`
+	PreviousRuns     RunSummary        `json:"previous_runs"`
 	RecentRuns       []WorkflowRun     `json:"recent_runs"`
 	FailedRuns       []WorkflowRun     `json:"failed_runs"`
 	TopRepositories  []RepositoryStats `json:"top_repositories"`

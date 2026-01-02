@@ -64,8 +64,9 @@ export function Dashboard() {
     { name: 'Other', value: summary.runs.cancelled + summary.runs.in_progress + summary.runs.queued, color: chartColors.pieOther },
   ] : [];
 
-  // Get current month name for display
-  const currentMonth = new Date().toLocaleString('default', { month: 'long' });
+  // Labels for the time periods
+  const currentPeriod = 'Last 30 days';
+  const previousPeriod = 'Previous 30 days';
 
   // Format total duration in hours and minutes
   const formatTotalTime = (seconds: number): string => {
@@ -79,6 +80,7 @@ export function Dashboard() {
   };
 
   const totalDuration = summary?.runs.total_duration_seconds || 0;
+  const previousTotalDuration = summary?.previous_runs?.total_duration_seconds || 0;
 
   return (
     <div className="space-y-6">
@@ -100,11 +102,14 @@ export function Dashboard() {
           subtitle={`${summary?.workflows.active || 0} active`}
         />
         <StatCard
-          title={`Runs (${currentMonth})`}
+          title={`Runs (${currentPeriod})`}
           value={summary?.runs.total || 0}
           icon={Play}
           color="info"
           subtitle={`${summary?.runs.success || 0} successful, ${summary?.runs.failed || 0} failed`}
+          previousLabel={previousPeriod}
+          previousValue={summary?.previous_runs?.total || 0}
+          previousSubtitle={`${summary?.previous_runs?.success || 0} successful, ${summary?.previous_runs?.failed || 0} failed`}
         />
         <StatCard
           title="Pending Runs"
@@ -114,11 +119,14 @@ export function Dashboard() {
           subtitle={`${summary?.runs.in_progress || 0} in progress, ${summary?.runs.queued || 0} queued`}
         />
         <StatCard
-          title={`Pipeline Time (${currentMonth})`}
+          title={`Pipeline Time (${currentPeriod})`}
           value={formatTotalTime(totalDuration)}
           icon={Timer}
           color="success"
           subtitle={`${summary?.runs.total || 0} runs completed`}
+          previousLabel={previousPeriod}
+          previousValue={formatTotalTime(previousTotalDuration)}
+          previousSubtitle={`${summary?.previous_runs?.total || 0} runs completed`}
         />
       </div>
 
@@ -278,9 +286,12 @@ interface StatCardProps {
   icon: React.ElementType;
   color: 'primary' | 'success' | 'warning' | 'info' | 'danger';
   subtitle?: string;
+  previousLabel?: string;
+  previousValue?: number | string;
+  previousSubtitle?: string;
 }
 
-function StatCard({ title, value, icon: Icon, color, subtitle }: StatCardProps) {
+function StatCard({ title, value, icon: Icon, color, subtitle, previousLabel, previousValue, previousSubtitle }: StatCardProps) {
   const colorClasses = {
     primary: 'bg-primary-100 text-primary-600 dark:bg-primary-900 dark:text-primary-200',
     success: 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-200',
@@ -297,6 +308,15 @@ function StatCard({ title, value, icon: Icon, color, subtitle }: StatCardProps) 
           <p className="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">{value}</p>
           {subtitle && (
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{subtitle}</p>
+          )}
+          {previousLabel && previousValue !== undefined && (
+            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+              <p className="text-xs font-medium text-gray-400 dark:text-gray-500">{previousLabel}</p>
+              <p className="text-lg font-semibold text-gray-600 dark:text-gray-300 mt-0.5">{previousValue}</p>
+              {previousSubtitle && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{previousSubtitle}</p>
+              )}
+            </div>
           )}
         </div>
         <div className={cn('p-3 rounded-lg', colorClasses[color])}>

@@ -723,12 +723,34 @@ func (m *MemoryStorage) GetDashboardSummary(ctx context.Context) (*models.Dashbo
 		}
 	}
 
-	// Run stats (current month only)
+	// Calculate date ranges for current and previous periods (last 30 days and 30-60 days ago)
 	now := time.Now()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	currentPeriodStart := now.AddDate(0, 0, -30) // 30 days ago
+	previousPeriodStart := now.AddDate(0, 0, -60) // 60 days ago
+	previousPeriodEnd := currentPeriodStart
+
+	// Debug logging
+	totalRuns := len(m.runs)
+	var minDate, maxDate time.Time
 	for _, run := range m.runs {
-		// Count runs from current month
-		if run.StartedAt.After(startOfMonth) || run.StartedAt.Equal(startOfMonth) {
+		if minDate.IsZero() || run.StartedAt.Before(minDate) {
+			minDate = run.StartedAt
+		}
+		if maxDate.IsZero() || run.StartedAt.After(maxDate) {
+			maxDate = run.StartedAt
+		}
+	}
+	log.Debug().
+		Int("total_runs_in_memory", totalRuns).
+		Time("min_run_date", minDate).
+		Time("max_run_date", maxDate).
+		Time("current_period_start", currentPeriodStart).
+		Time("previous_period_start", previousPeriodStart).
+		Msg("Dashboard summary date ranges")
+
+	for _, run := range m.runs {
+		// Current period (last 30 days)
+		if !run.StartedAt.Before(currentPeriodStart) {
 			summary.Runs.Total++
 			if run.Conclusion != nil {
 				switch *run.Conclusion {
@@ -740,27 +762,65 @@ func (m *MemoryStorage) GetDashboardSummary(ctx context.Context) (*models.Dashbo
 					summary.Runs.Cancelled++
 				}
 			}
-			// Add duration to total
 			if run.DurationSeconds != nil {
 				summary.Runs.TotalDuration += *run.DurationSeconds
 			}
+			if run.Status == "in_progress" {
+				summary.Runs.InProgress++
+			} else if run.Status == "queued" {
+				summary.Runs.Queued++
+			}
 		}
-		// Always count in-progress/queued runs regardless of date
-		if run.Status == "in_progress" {
-			summary.Runs.InProgress++
-		} else if run.Status == "queued" {
-			summary.Runs.Queued++
+
+		// Previous period (30-60 days ago)
+		if !run.StartedAt.Before(previousPeriodStart) && run.StartedAt.Before(previousPeriodEnd) {
+			summary.PreviousRuns.Total++
+			if run.Conclusion != nil {
+				switch *run.Conclusion {
+				case "success":
+					summary.PreviousRuns.Success++
+				case "failure":
+					summary.PreviousRuns.Failed++
+				case "cancelled":
+					summary.PreviousRuns.Cancelled++
+				}
+			}
+			if run.DurationSeconds != nil {
+				summary.PreviousRuns.TotalDuration += *run.DurationSeconds
+			}
+			if run.Status == "in_progress" {
+				summary.PreviousRuns.InProgress++
+			} else if run.Status == "queued" {
+				summary.PreviousRuns.Queued++
+			}
 		}
 	}
+
+	log.Debug().
+		Int("current_period_runs", summary.Runs.Total).
+		Int("previous_period_runs", summary.PreviousRuns.Total).
+		Msg("Dashboard summary results")
 
 	if summary.Runs.Total > 0 {
 		summary.Runs.SuccessRate = float64(summary.Runs.Success) / float64(summary.Runs.Total) * 100
 	}
+	if summary.PreviousRuns.Total > 0 {
+		summary.PreviousRuns.SuccessRate = float64(summary.PreviousRuns.Success) / float64(summary.PreviousRuns.Total) * 100
+	}
 
-	// Recent runs
+	// Recent runs (with repository info populated)
 	var recentRuns []models.WorkflowRun
 	for _, run := range m.runs {
-		recentRuns = append(recentRuns, *run)
+		runCopy := *run
+		// Populate repository info
+		if repo, ok := m.repositories[run.RepoID]; ok {
+			runCopy.Repository = &models.Repository{
+				ID:       repo.ID,
+				FullName: repo.FullName,
+				Name:     repo.Name,
+			}
+		}
+		recentRuns = append(recentRuns, runCopy)
 	}
 	sort.Slice(recentRuns, func(i, j int) bool {
 		return recentRuns[i].StartedAt.After(recentRuns[j].StartedAt)

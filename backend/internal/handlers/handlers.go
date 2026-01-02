@@ -523,8 +523,9 @@ func (h *Handler) runSync(accessToken string) {
 			workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
 		}
 
-		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
-		ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
+		// Fetch and save workflow runs for this repository
+		// Use 200 runs to ensure we have enough history for the "Previous 30 days" comparison
+		ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 200)
 		if err != nil {
 			log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflow runs")
 			continue
@@ -534,8 +535,16 @@ func (h *Handler) runSync(accessToken string) {
 			// Look up the internal workflow ID
 			workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
 			if !ok {
+				log.Debug().Int64("github_workflow_id", ghRun.GetWorkflowID()).Msg("Skipping run - workflow not found in map")
 				continue
 			}
+
+			startedAt := ghRun.GetRunStartedAt().Time
+			log.Debug().
+				Int64("run_id", ghRun.GetID()).
+				Time("started_at", startedAt).
+				Str("status", ghRun.GetStatus()).
+				Msg("Syncing run")
 
 			run := &models.WorkflowRun{
 				GitHubID:   ghRun.GetID(),
@@ -549,7 +558,7 @@ func (h *Handler) runSync(accessToken string) {
 				CommitSHA:  ghRun.GetHeadSHA(),
 				ActorLogin: ghRun.GetActor().GetLogin(),
 				HTMLURL:    ghRun.GetHTMLURL(),
-				StartedAt:  ghRun.GetRunStartedAt().Time,
+				StartedAt:  startedAt,
 			}
 
 			if ghRun.Conclusion != nil {
@@ -862,20 +871,30 @@ func (h *Handler) GetJobLogs(w http.ResponseWriter, r *http.Request) {
 
 // WorkflowDefinition represents the parsed workflow YAML structure
 type WorkflowDefinition struct {
+	Name string                            `yaml:"name" json:"name"`
 	Jobs map[string]WorkflowJobDefinition `yaml:"jobs" json:"jobs"`
 }
 
 // WorkflowJobDefinition represents a job in the workflow YAML
 type WorkflowJobDefinition struct {
-	Name  string      `yaml:"name,omitempty" json:"name,omitempty"`
-	Needs interface{} `yaml:"needs,omitempty" json:"needs,omitempty"` // Can be string or []string
+	Name     string                   `yaml:"name,omitempty" json:"name,omitempty"`
+	Needs    interface{}              `yaml:"needs,omitempty" json:"needs,omitempty"` // Can be string or []string
+	Uses     string                   `yaml:"uses,omitempty" json:"uses,omitempty"`   // For reusable workflows
+	Strategy *WorkflowStrategyDefinition `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+}
+
+// WorkflowStrategyDefinition represents the strategy section of a job
+type WorkflowStrategyDefinition struct {
+	Matrix map[string]interface{} `yaml:"matrix,omitempty" json:"matrix,omitempty"`
 }
 
 // JobDependency represents a job and its dependencies for the frontend
 type JobDependency struct {
-	JobID string   `json:"job_id"` // The job key in the YAML (e.g., "build", "test")
-	Name  string   `json:"name"`   // The display name (from 'name' field or job_id)
-	Needs []string `json:"needs"`  // List of job IDs this job depends on
+	JobID    string   `json:"job_id"`    // The job key in the YAML (e.g., "build", "test")
+	Name     string   `json:"name"`      // The display name (from 'name' field or job_id)
+	Needs    []string `json:"needs"`     // List of job IDs this job depends on
+	IsMatrix bool     `json:"is_matrix"` // Whether this job uses a matrix strategy
+	Prefix   string   `json:"prefix"`    // Prefix for job names (e.g., calling job name for reusable workflows)
 }
 
 // GetRunWorkflowDefinition fetches and parses the workflow YAML to extract job dependencies
@@ -938,13 +957,112 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Extract job dependencies
+	log.Debug().
+		Str("workflow_path", workflow.Path).
+		Int("job_count", len(workflowDef.Jobs)).
+		Str("workflow_name", workflowDef.Name).
+		Msg("Parsed workflow definition")
+
+	// Extract job dependencies, handling reusable workflows
 	dependencies := make([]JobDependency, 0, len(workflowDef.Jobs))
+	
 	for jobID, jobDef := range workflowDef.Jobs {
+		// Check if this job uses a reusable workflow
+		if jobDef.Uses != "" {
+			log.Debug().
+				Str("job_id", jobID).
+				Str("uses", jobDef.Uses).
+				Msg("Job uses reusable workflow")
+			
+			// Parse the reusable workflow reference
+			ref := parseReusableWorkflowRef(jobDef.Uses)
+			if ref == nil {
+				log.Warn().Str("uses", jobDef.Uses).Msg("Could not parse reusable workflow reference")
+			} else {
+				log.Debug().
+					Str("uses", jobDef.Uses).
+					Str("owner", ref.Owner).
+					Str("repo", ref.Repo).
+					Str("path", ref.Path).
+					Str("ref", ref.Ref).
+					Bool("is_local", ref.IsLocal).
+					Msg("Parsed reusable workflow reference")
+				
+				var reusableContent []byte
+				var fetchErr error
+				
+				if ref.IsLocal {
+					// Local workflow - use current repo
+					reusableContent, fetchErr = h.ghClient.GetWorkflowContent(r.Context(), client, owner, repoName, ref.Path, run.CommitSHA)
+				} else {
+					// External workflow - use referenced repo
+					// Use the ref from the uses clause, or fall back to default branch
+					fetchRef := ref.Ref
+					if fetchRef == "" {
+						fetchRef = "main" // Default fallback
+					}
+					reusableContent, fetchErr = h.ghClient.GetWorkflowContent(r.Context(), client, ref.Owner, ref.Repo, ref.Path, fetchRef)
+				}
+				
+				if fetchErr != nil {
+					log.Warn().Err(fetchErr).
+						Str("path", ref.Path).
+						Str("owner", ref.Owner).
+						Str("repo", ref.Repo).
+						Msg("Failed to fetch reusable workflow content")
+				} else {
+					var reusableDef WorkflowDefinition
+					if err := yaml.Unmarshal(reusableContent, &reusableDef); err != nil {
+						log.Warn().Err(err).Str("path", ref.Path).Msg("Failed to parse reusable workflow YAML")
+					} else {
+						log.Debug().
+							Str("reusable_path", ref.Path).
+							Int("job_count", len(reusableDef.Jobs)).
+							Msg("Parsed reusable workflow definition")
+						
+						// Add jobs from the reusable workflow with the calling job as prefix
+						for reusableJobID, reusableJobDef := range reusableDef.Jobs {
+							dep := JobDependency{
+								JobID:    reusableJobID,
+								Name:     reusableJobDef.Name,
+								Needs:    []string{},
+								IsMatrix: reusableJobDef.Strategy != nil && reusableJobDef.Strategy.Matrix != nil,
+								Prefix:   jobID, // The calling job ID becomes the prefix
+							}
+
+							if dep.Name == "" {
+								dep.Name = reusableJobID
+							}
+
+							// Parse needs
+							switch needs := reusableJobDef.Needs.(type) {
+							case string:
+								if needs != "" {
+									dep.Needs = []string{needs}
+								}
+							case []interface{}:
+								for _, n := range needs {
+									if s, ok := n.(string); ok {
+										dep.Needs = append(dep.Needs, s)
+									}
+								}
+							}
+							
+							dependencies = append(dependencies, dep)
+						}
+						continue // Skip adding the calling job itself
+					}
+				}
+			}
+		}
+
+		// Regular job (not a reusable workflow or failed to fetch reusable)
 		dep := JobDependency{
-			JobID: jobID,
-			Name:  jobDef.Name,
-			Needs: []string{},
+			JobID:    jobID,
+			Name:     jobDef.Name,
+			Needs:    []string{},
+			IsMatrix: jobDef.Strategy != nil && jobDef.Strategy.Matrix != nil,
+			Prefix:   "", // No prefix for regular jobs
 		}
 
 		// Use jobID as name if name is not set
@@ -969,7 +1087,79 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 		dependencies = append(dependencies, dep)
 	}
 
+	log.Debug().Int("total_dependencies", len(dependencies)).Msg("Returning job dependencies")
 	json.NewEncoder(w).Encode(dependencies)
+}
+
+// ReusableWorkflowRef represents a parsed reusable workflow reference
+type ReusableWorkflowRef struct {
+	Owner    string
+	Repo     string
+	Path     string
+	Ref      string
+	IsLocal  bool
+}
+
+// parseReusableWorkflowRef parses a 'uses' reference into its components
+func parseReusableWorkflowRef(uses string) *ReusableWorkflowRef {
+	// Handle local workflow references: ./.github/workflows/foo.yaml
+	if strings.HasPrefix(uses, "./") {
+		return &ReusableWorkflowRef{
+			Path:    strings.TrimPrefix(uses, "./"),
+			IsLocal: true,
+		}
+	}
+	
+	// Handle same-repo references without ./ prefix
+	if strings.HasPrefix(uses, ".github/workflows/") {
+		path := uses
+		ref := ""
+		if idx := strings.Index(path, "@"); idx != -1 {
+			ref = path[idx+1:]
+			path = path[:idx]
+		}
+		return &ReusableWorkflowRef{
+			Path:    path,
+			Ref:     ref,
+			IsLocal: true,
+		}
+	}
+	
+	// External workflows: owner/repo/.github/workflows/file.yaml@ref
+	// or owner/repo/path/to/workflow.yml@ref
+	ref := ""
+	pathWithRef := uses
+	if idx := strings.Index(uses, "@"); idx != -1 {
+		ref = uses[idx+1:]
+		pathWithRef = uses[:idx]
+	}
+	
+	// Split into owner/repo and path
+	parts := strings.SplitN(pathWithRef, "/", 3)
+	if len(parts) >= 3 {
+		return &ReusableWorkflowRef{
+			Owner:   parts[0],
+			Repo:    parts[1],
+			Path:    parts[2],
+			Ref:     ref,
+			IsLocal: false,
+		}
+	}
+	
+	return nil
+}
+
+// resolveReusableWorkflowPath converts a 'uses' reference to a file path (for local refs only)
+func (h *Handler) resolveReusableWorkflowPath(uses string, callerPath string) string {
+	ref := parseReusableWorkflowRef(uses)
+	if ref == nil {
+		return ""
+	}
+	if ref.IsLocal {
+		return ref.Path
+	}
+	// External workflows need special handling with owner/repo
+	return ""
 }
 
 // RerunWorkflow reruns a workflow

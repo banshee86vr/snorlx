@@ -829,28 +829,79 @@ func (d *DatabaseStorage) GetDashboardSummary(ctx context.Context) (*models.Dash
 		FROM workflows
 	`).Scan(&summary.Workflows.Total, &summary.Workflows.Active, &summary.Workflows.Disabled)
 
-	// Get run stats (last 24 hours)
-	d.pool.QueryRow(ctx, `
+	// Get run stats (current month - last 30 days) - using same pattern as GetTrends which works
+	var currentTotal, currentSuccess, currentFailed, currentInProgress, currentQueued, currentCancelled, currentDuration int64
+	err := d.pool.QueryRow(ctx, `
 		SELECT 
 			COUNT(*),
 			COUNT(*) FILTER (WHERE conclusion = 'success'),
 			COUNT(*) FILTER (WHERE conclusion = 'failure'),
 			COUNT(*) FILTER (WHERE status = 'in_progress'),
 			COUNT(*) FILTER (WHERE status = 'queued'),
-			COUNT(*) FILTER (WHERE conclusion = 'cancelled')
+			COUNT(*) FILTER (WHERE conclusion = 'cancelled'),
+			COALESCE(SUM(duration_seconds), 0)
 		FROM workflow_runs
-		WHERE started_at >= NOW() - INTERVAL '24 hours'
+		WHERE started_at >= NOW() - INTERVAL '1 month'
 	`).Scan(
-		&summary.Runs.Total,
-		&summary.Runs.Success,
-		&summary.Runs.Failed,
-		&summary.Runs.InProgress,
-		&summary.Runs.Queued,
-		&summary.Runs.Cancelled,
+		&currentTotal,
+		&currentSuccess,
+		&currentFailed,
+		&currentInProgress,
+		&currentQueued,
+		&currentCancelled,
+		&currentDuration,
 	)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get current month run stats")
+	}
+	summary.Runs.Total = int(currentTotal)
+	summary.Runs.Success = int(currentSuccess)
+	summary.Runs.Failed = int(currentFailed)
+	summary.Runs.InProgress = int(currentInProgress)
+	summary.Runs.Queued = int(currentQueued)
+	summary.Runs.Cancelled = int(currentCancelled)
+	summary.Runs.TotalDuration = int(currentDuration)
 
 	if summary.Runs.Total > 0 {
 		summary.Runs.SuccessRate = float64(summary.Runs.Success) / float64(summary.Runs.Total) * 100
+	}
+
+	// Get run stats (previous month - 30-60 days ago)
+	var prevTotal, prevSuccess, prevFailed, prevInProgress, prevQueued, prevCancelled, prevDuration int64
+	err = d.pool.QueryRow(ctx, `
+		SELECT 
+			COUNT(*),
+			COUNT(*) FILTER (WHERE conclusion = 'success'),
+			COUNT(*) FILTER (WHERE conclusion = 'failure'),
+			COUNT(*) FILTER (WHERE status = 'in_progress'),
+			COUNT(*) FILTER (WHERE status = 'queued'),
+			COUNT(*) FILTER (WHERE conclusion = 'cancelled'),
+			COALESCE(SUM(duration_seconds), 0)
+		FROM workflow_runs
+		WHERE started_at >= NOW() - INTERVAL '2 months'
+		  AND started_at < NOW() - INTERVAL '1 month'
+	`).Scan(
+		&prevTotal,
+		&prevSuccess,
+		&prevFailed,
+		&prevInProgress,
+		&prevQueued,
+		&prevCancelled,
+		&prevDuration,
+	)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get previous month run stats")
+	}
+	summary.PreviousRuns.Total = int(prevTotal)
+	summary.PreviousRuns.Success = int(prevSuccess)
+	summary.PreviousRuns.Failed = int(prevFailed)
+	summary.PreviousRuns.InProgress = int(prevInProgress)
+	summary.PreviousRuns.Queued = int(prevQueued)
+	summary.PreviousRuns.Cancelled = int(prevCancelled)
+	summary.PreviousRuns.TotalDuration = int(prevDuration)
+
+	if summary.PreviousRuns.Total > 0 {
+		summary.PreviousRuns.SuccessRate = float64(summary.PreviousRuns.Success) / float64(summary.PreviousRuns.Total) * 100
 	}
 
 	// Get recent runs
