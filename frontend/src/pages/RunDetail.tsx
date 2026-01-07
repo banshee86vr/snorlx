@@ -1,12 +1,17 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { useTheme } from "../context/ThemeContext";
+import {
+	useState,
+	useCallback,
+	useMemo,
+	useRef,
+	useEffect,
+	useLayoutEffect,
+} from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	ReactFlow,
 	Background,
 	Controls,
-	Panel,
 	Handle,
 	Position,
 	useNodesState,
@@ -16,108 +21,8 @@ import {
 	type Node,
 	type Edge,
 } from "@xyflow/react";
+import dagre from "dagre";
 import "@xyflow/react/dist/style.css";
-import Dagre from "dagre";
-
-// Helper to estimate text width in pixels (approximate)
-// Uses ~7px per character for 14px font (text-sm)
-const estimateTextWidth = (
-	text: string,
-	fontSize: "sm" | "xs" = "sm",
-): number => {
-	const charWidth = fontSize === "sm" ? 7 : 6;
-	// Add padding for icon (24px) and container padding (32px)
-	return Math.min(text.length * charWidth + 56, 400); // Cap at 400px max
-};
-
-// Helper function to layout nodes using dagre
-const getLayoutedElements = (
-	nodes: Node[],
-	edges: Edge[],
-	direction: "TB" | "LR" = "LR",
-) => {
-	const dagreGraph = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-
-	dagreGraph.setGraph({
-		rankdir: direction,
-		nodesep: 80,
-		ranksep: 200, // Increased for matrix groups
-		marginx: 50,
-		marginy: 50,
-	});
-
-	// Add nodes to dagre graph with appropriate sizes
-	for (const node of nodes) {
-		const nodeData = node.data as { width?: number; jobs?: unknown[] };
-		if (node.type === "matrixGroup") {
-			// Matrix group: use stored width, calculate height based on number of jobs
-			const jobCount = nodeData?.jobs?.length || 1;
-			const height = 44 + jobCount * 52; // base (padding + header) + jobs with spacing
-			const width = nodeData?.width || 200;
-			dagreGraph.setNode(node.id, { width, height });
-		} else {
-			const width = nodeData?.width || 180;
-			dagreGraph.setNode(node.id, { width, height: 70 });
-		}
-	}
-
-	// Add edges to dagre graph
-	for (const edge of edges) {
-		dagreGraph.setEdge(edge.source, edge.target);
-	}
-
-	// Run the layout algorithm
-	Dagre.layout(dagreGraph);
-
-	// Apply the calculated positions to nodes
-	const layoutedNodes = nodes.map((node) => {
-		const nodeWithPosition = dagreGraph.node(node.id);
-		const nodeData = node.data as { width?: number; jobs?: unknown[] };
-		const width = nodeData?.width || (node.type === "matrixGroup" ? 200 : 180);
-		const jobCount = nodeData?.jobs?.length || 1;
-		const height =
-			node.type === "matrixGroup"
-				? 44 + jobCount * 52 // base (padding + header) + jobs with spacing
-				: 70;
-		return {
-			...node,
-			position: {
-				x: nodeWithPosition.x - width / 2,
-				y: nodeWithPosition.y - height / 2,
-			},
-		};
-	});
-
-	return { nodes: layoutedNodes, edges };
-};
-
-// Flow panel controls component (uses useReactFlow hook)
-function FlowPanelControls({ onAutoLayout }: { onAutoLayout: () => void }) {
-	const { fitView } = useReactFlow();
-
-	const handleAutoLayout = useCallback(() => {
-		onAutoLayout();
-		// Fit view after a small delay to allow state update
-		setTimeout(
-			() => fitView({ padding: 0.5, maxZoom: 0.85, duration: 300 }),
-			50,
-		);
-	}, [onAutoLayout, fitView]);
-
-	return (
-		<Panel position="top-right" className="flex gap-2">
-			<button
-				type="button"
-				onClick={handleAutoLayout}
-				className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-slate-700 dark:text-slate-300 text-sm font-medium transition-colors shadow-lg"
-				title="Auto-layout nodes using dagre algorithm"
-			>
-				<LayoutGrid className="w-4 h-4" />
-				Auto Layout
-			</button>
-		</Panel>
-	);
-}
 
 // Glow pulse animation styles
 const glowPulseStyles = `
@@ -131,6 +36,81 @@ const glowPulseStyles = `
 }
 `;
 
+// Dagre layout configuration
+const NODE_WIDTH = 320;
+const NODE_HEIGHT = 70;
+
+// Apply dagre layout algorithm to nodes and edges
+function getLayoutedElements(
+	nodes: Node[],
+	edges: Edge[],
+	direction: "TB" | "LR" = "LR",
+): { nodes: Node[]; edges: Edge[] } {
+	const dagreGraph = new dagre.graphlib.Graph();
+	dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+	dagreGraph.setGraph({
+		rankdir: direction,
+		nodesep: 80, // Vertical spacing between nodes in same rank
+		ranksep: 120, // Horizontal spacing between ranks
+		marginx: 30,
+		marginy: 30,
+	});
+
+	// Separate parent nodes from child nodes
+	// Child nodes (with parentId) have relative positions and shouldn't be layouted by dagre
+	const parentNodes = nodes.filter((node) => !node.parentId);
+	const childNodes = nodes.filter((node) => node.parentId);
+
+	// Add only parent/standalone nodes to dagre graph
+	for (const node of parentNodes) {
+		const width =
+			node.type === "matrixGroup" ? (node.data.width as number) : NODE_WIDTH;
+		const height =
+			node.type === "matrixGroup" ? (node.data.height as number) : NODE_HEIGHT;
+		dagreGraph.setNode(node.id, { width, height });
+	}
+
+	// Add edges to dagre graph (only edges between parent nodes)
+	const parentNodeIds = new Set(parentNodes.map((n) => n.id));
+	for (const edge of edges) {
+		// Only add edges where both source and target are parent nodes
+		if (parentNodeIds.has(edge.source) && parentNodeIds.has(edge.target)) {
+			dagreGraph.setEdge(edge.source, edge.target);
+		}
+	}
+
+	// Run the dagre layout
+	dagre.layout(dagreGraph);
+
+	// Apply the calculated positions to parent nodes
+	const layoutedParentNodes = parentNodes.map((node) => {
+		const nodeWithPosition = dagreGraph.node(node.id);
+		const width =
+			node.type === "matrixGroup" ? (node.data.width as number) : NODE_WIDTH;
+		const height =
+			node.type === "matrixGroup" ? (node.data.height as number) : NODE_HEIGHT;
+
+		return {
+			...node,
+			position: {
+				// Dagre gives center positions, we need top-left
+				x: nodeWithPosition.x - width / 2,
+				y: nodeWithPosition.y - height / 2,
+			},
+		};
+	});
+
+	// Child nodes keep their relative positions (they move with their parent)
+	// Return parent nodes first, then child nodes (ReactFlow requires parents before children)
+	// Ensure all edges use bezier curves (type: "default")
+	const bezierEdges = edges.map((edge) => ({
+		...edge,
+		type: "default" as const,
+	}));
+	return { nodes: [...layoutedParentNodes, ...childNodes], edges: bezierEdges };
+}
+
 // Helper to get glow color based on job status/conclusion
 function getJobGlowColor(
 	status: string,
@@ -142,6 +122,44 @@ function getJobGlowColor(
 	if (conclusion === "failure") return `rgba(239, 68, 68, ${opacity})`;
 	if (conclusion === "skipped") return `rgba(156, 163, 175, ${opacity})`;
 	return `rgba(245, 158, 11, ${opacity})`;
+}
+
+// Helper to get edge color based on job status/conclusion (hex format for edges)
+function getJobEdgeColor(status: string, conclusion: string | null): string {
+	if (status === "in_progress") return "#3b82f6"; // blue-500
+	if (conclusion === "success") return "#10b981"; // emerald-500
+	if (conclusion === "failure") return "#ef4444"; // red-500
+	if (conclusion === "skipped") return "#9ca3af"; // gray-400
+	return "#f59e0b"; // amber-500
+}
+
+// Helper to get aggregate color for a group of jobs (matrix strategy)
+// Priority: failure > in_progress > queued/pending > success > skipped
+function getGroupEdgeColor(jobs: WorkflowJob[]): string {
+	if (jobs.length === 0) return "#6b7280"; // gray-500
+
+	let hasFailure = false;
+	let hasInProgress = false;
+	let hasPending = false;
+	let hasSuccess = false;
+
+	for (const job of jobs) {
+		if (job.conclusion === "failure") hasFailure = true;
+		else if (job.status === "in_progress") hasInProgress = true;
+		else if (
+			job.status === "queued" ||
+			job.status === "waiting" ||
+			job.status === "pending"
+		)
+			hasPending = true;
+		else if (job.conclusion === "success") hasSuccess = true;
+	}
+
+	if (hasFailure) return "#ef4444"; // red-500
+	if (hasInProgress) return "#3b82f6"; // blue-500
+	if (hasPending) return "#f59e0b"; // amber-500
+	if (hasSuccess) return "#10b981"; // emerald-500
+	return "#9ca3af"; // gray-400 (all skipped or unknown)
 }
 import {
 	ArrowLeft,
@@ -171,6 +189,7 @@ import {
 	formatDateTime,
 	getStatusColor,
 } from "../lib/utils";
+import { useTheme } from "../context/ThemeContext";
 import type { WorkflowJob } from "../types";
 
 // Custom node component for jobs in the flow
@@ -181,11 +200,10 @@ function JobNode({
 		job: WorkflowJob;
 		selected: boolean;
 		onClick: () => void;
-		isInGroup?: boolean;
-		width?: number;
+		displayName?: string;
 	};
 }) {
-	const { job, selected, onClick, isInGroup, width } = data;
+	const { job, selected, onClick, displayName } = data;
 
 	const getStatusStyles = () => {
 		if (job.status === "in_progress") {
@@ -210,29 +228,29 @@ function JobNode({
 		return "border-amber-500 bg-amber-500/10 ring-amber-500/30";
 	};
 
-	// Extract just the matrix values part for display when in a group
-	const getDisplayName = () => {
-		if (isInGroup && job.name.includes(" (")) {
-			const match = job.name.match(/\(([^)]+)\)$/);
-			return match ? match[1] : job.name;
+	// Get short name for display (strip prefix if exists)
+	const getShortName = (name: string) => {
+		const slashIdx = name.indexOf(" / ");
+		if (slashIdx > 0) {
+			return name.substring(slashIdx + 3);
 		}
-		return job.name;
+		return name;
 	};
+
+	const shortName = displayName || getShortName(job.name);
 
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			className={cn(
-				"rounded-xl border-2 cursor-pointer transition-all duration-200 relative",
-				isInGroup ? "px-2 py-1.5 w-full" : "px-3 py-2",
+				"px-4 py-3 rounded-xl border-2 cursor-pointer transition-all duration-200 w-[320px] relative",
 				"hover:scale-105 hover:shadow-lg",
 				getStatusStyles(),
 				selected && "ring-2 scale-105",
 			)}
-			style={{
-				...(width && !isInGroup ? { width: `${width}px` } : {}),
-				...(selected
+			style={
+				selected
 					? {
 							animation: "glow-pulse 2s ease-in-out infinite",
 							["--glow-color" as string]: getJobGlowColor(
@@ -240,121 +258,83 @@ function JobNode({
 								job.conclusion,
 							),
 						}
-					: {}),
-			}}
-		>
-			{/* Only show handles if not in a group - group handles connections */}
-			{!isInGroup && (
-				<Handle
-					type="target"
-					position={Position.Left}
-					className="!bg-gray-400 !w-2 !h-2"
-				/>
-			)}
-			<div className="flex items-center gap-2">
-				<JobStatusIcon status={job.status} conclusion={job.conclusion} />
-				<div className="flex-1 min-w-0 text-left">
-					<p className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate">
-						{getDisplayName()}
-					</p>
-					<p className="text-xs text-gray-500 dark:text-gray-400">
-						{formatDuration(job.duration_seconds)}
-					</p>
-				</div>
-			</div>
-			{!isInGroup && (
-				<Handle
-					type="source"
-					position={Position.Right}
-					className="!bg-gray-400 !w-2 !h-2"
-				/>
-			)}
-		</button>
-	);
-}
-
-// Matrix group node - contains multiple matrix job variants
-function MatrixGroupNode({
-	data,
-}: {
-	data: {
-		groupName: string;
-		jobs: WorkflowJob[];
-		selectedJobId: number | null;
-		onJobClick: (job: WorkflowJob) => void;
-		width?: number;
-	};
-}) {
-	const { groupName, jobs, selectedJobId, onJobClick, width } = data;
-
-	// Determine overall group status based on all jobs
-	const getGroupStatus = () => {
-		const hasInProgress = jobs.some((j) => j.status === "in_progress");
-		const hasPending = jobs.some((j) =>
-			["queued", "pending", "waiting"].includes(j.status),
-		);
-		const allSuccess = jobs.every((j) => j.conclusion === "success");
-		const hasFailure = jobs.some((j) => j.conclusion === "failure");
-		const allSkipped = jobs.every((j) => j.conclusion === "skipped");
-
-		if (hasInProgress) return "in_progress";
-		if (hasPending) return "pending";
-		if (hasFailure) return "failure";
-		if (allSuccess) return "success";
-		if (allSkipped) return "skipped";
-		return "pending";
-	};
-
-	const getGroupStyles = () => {
-		const status = getGroupStatus();
-		switch (status) {
-			case "in_progress":
-				return "border-blue-500/50 bg-blue-500/5";
-			case "pending":
-				return "border-amber-500/50 bg-amber-500/5";
-			case "success":
-				return "border-emerald-500/50 bg-emerald-500/5";
-			case "failure":
-				return "border-red-500/50 bg-red-500/5";
-			case "skipped":
-				return "border-gray-400/50 bg-gray-400/5";
-			default:
-				return "border-gray-400/50 bg-gray-400/5";
-		}
-	};
-
-	return (
-		<div
-			className={cn("rounded-xl border-2 border-dashed p-2", getGroupStyles())}
-			style={width ? { width: `${width}px` } : undefined}
+					: undefined
+			}
 		>
 			<Handle
 				type="target"
 				position={Position.Left}
 				className="!bg-gray-400 !w-2 !h-2"
 			/>
-			{/* Group header with base job name */}
-			<div className="mb-1.5 px-1">
-				<p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide truncate">
-					{groupName}
-				</p>
-				<p className="text-[10px] text-gray-500 dark:text-gray-500">
-					{jobs.length} jobs
-				</p>
+			<div className="flex items-center gap-2">
+				<JobStatusIcon status={job.status} conclusion={job.conclusion} />
+				<div className="flex-1 min-w-0 text-left">
+					<p
+						className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate"
+						title={job.name}
+					>
+						{shortName}
+					</p>
+					<p className="text-xs text-gray-500 dark:text-gray-400">
+						{formatDuration(job.duration_seconds)}
+					</p>
+				</div>
 			</div>
-			{/* Individual matrix jobs */}
-			<div className="space-y-1.5">
-				{jobs.map((job) => (
-					<JobNode
-						key={job.id}
-						data={{
-							job,
-							selected: selectedJobId === job.id,
-							onClick: () => onJobClick(job),
-							isInGroup: true,
-						}}
-					/>
-				))}
+			<Handle
+				type="source"
+				position={Position.Right}
+				className="!bg-gray-400 !w-2 !h-2"
+			/>
+		</button>
+	);
+}
+
+// Custom group node for matrix jobs
+function MatrixGroupNode({
+	data,
+}: {
+	data: { label: string; jobs: WorkflowJob[]; width: number; height: number };
+}) {
+	const { label, jobs } = data;
+	const { isDark } = useTheme();
+
+	// Determine overall status of the group
+	const hasInProgress = jobs.some((j) => j.status === "in_progress");
+	const hasPending = jobs.some(
+		(j) => j.status === "queued" || j.status === "pending",
+	);
+	const allSuccess = jobs.every((j) => j.conclusion === "success");
+	const hasFailed = jobs.some((j) => j.conclusion === "failure");
+
+	const getBorderColor = () => {
+		if (hasInProgress) return "border-blue-500/50";
+		if (hasFailed) return "border-red-500/50";
+		if (allSuccess) return "border-emerald-500/50";
+		if (hasPending) return "border-amber-500/50";
+		return "border-gray-500/50";
+	};
+
+	return (
+		<div
+			className={cn(
+				"rounded-xl border-2 border-dashed p-3 pt-8",
+				isDark ? "bg-slate-800/30" : "bg-gray-100/50",
+				getBorderColor(),
+			)}
+			style={{ width: data.width, height: data.height }}
+		>
+			<Handle
+				type="target"
+				position={Position.Left}
+				className="!bg-gray-400 !w-2 !h-2"
+			/>
+			<div
+				className={cn(
+					"absolute -top-3 left-3 px-2 py-0.5 rounded text-xs font-medium",
+					isDark ? "bg-slate-800 text-gray-400" : "bg-gray-200 text-gray-600",
+				)}
+			>
+				Matrix: {label}
 			</div>
 			<Handle
 				type="source"
@@ -367,7 +347,8 @@ function MatrixGroupNode({
 
 const nodeTypes = { jobNode: JobNode, matrixGroup: MatrixGroupNode };
 
-export function RunDetail() {
+// Inner component that has access to ReactFlow hooks
+function RunDetailInner() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -433,7 +414,10 @@ export function RunDetail() {
 	// Fetch workflow definition to get job dependencies (needs)
 	const { data: workflowDefinition } = useQuery({
 		queryKey: ["runs", id, "workflow-definition"],
-		queryFn: () => runsApi.getWorkflowDefinition(Number(id)),
+		queryFn: async () => {
+			const result = await runsApi.getWorkflowDefinition(Number(id));
+			return result;
+		},
 		enabled: !!id,
 		staleTime: 1000 * 60 * 60, // Cache for 1 hour since workflow definition doesn't change
 	});
@@ -498,91 +482,208 @@ export function RunDetail() {
 		// Build dependency map using workflow definition if available
 		// Key: job name, Value: array of job names this job depends on
 		const dependencyMap = new Map<string, string[]>();
-		const jobIdByName = new Map<string, string>(); // job_id from YAML -> first matching job name
-		const matrixJobIds = new Set<string>(); // job_ids that have matrix strategy
-		const matrixJobBaseNames = new Map<string, string>(); // job name -> base name for grouping
+		const jobIdByName = new Map<string, string>(); // job_id from YAML -> job name
+
+		// Track matrix jobs for grouping
+		const matrixJobBaseNames = new Map<string, string>(); // job name -> base name
+
+		// Track reusable workflow prefixes for matching
+		const prefixedJobIds = new Map<string, string>(); // job_id -> prefix
+
+		// Track detected reusable workflow prefixes from job names
+		// Jobs from reusable workflows have names like "calling_job / inner_job"
+		const detectedPrefixes = new Set<string>();
+		for (const job of jobs) {
+			const slashIdx = job.name.indexOf(" / ");
+			if (slashIdx > 0) {
+				detectedPrefixes.add(job.name.substring(0, slashIdx));
+			}
+		}
 
 		if (workflowDefinition && workflowDefinition.length > 0) {
-			// First pass: identify which job_ids are matrix jobs
+			// First pass: collect prefixes from reusable workflows
 			for (const dep of workflowDefinition) {
-				if (dep.is_matrix) {
-					matrixJobIds.add(dep.job_id);
+				if (dep.prefix) {
+					prefixedJobIds.set(dep.job_id, dep.prefix);
 				}
 			}
 
-			// Build mapping from YAML job_id to actual job names
-			// For matrix jobs, find ALL matching jobs, not just the first one
+			// Helper to extract base name from job name
+			// Handles: "prefix / base (matrix)" -> base
+			// Handles: "prefix / base" -> base
+			// Handles: "base (matrix)" -> base
+			// Handles: "base" -> base
+			const extractBaseName = (
+				jobName: string,
+			): { prefix: string | null; base: string; hasMatrix: boolean } => {
+				let prefix: string | null = null;
+				let base = jobName;
+				let hasMatrix = false;
+
+				// Check for prefix pattern "prefix / rest"
+				const slashIdx = base.indexOf(" / ");
+				if (slashIdx > 0) {
+					prefix = base.substring(0, slashIdx);
+					base = base.substring(slashIdx + 3);
+				}
+
+				// Check for matrix pattern "base (matrix values)" or truncated "base (matrix..."
+				// GitHub truncates long job names with "..." so we need to handle both cases
+				if (
+					base.endsWith(")") ||
+					(base.includes(" (") && base.includes("..."))
+				) {
+					const parenIdx = base.lastIndexOf(" (");
+					if (parenIdx > 0) {
+						base = base.substring(0, parenIdx);
+						hasMatrix = true;
+					}
+				}
+
+				return { prefix, base, hasMatrix };
+			};
+
+			// Build mapping from YAML job_id to actual job name
 			for (const dep of workflowDefinition) {
 				const depNameLower = dep.name.toLowerCase();
 				const depJobIdLower = dep.job_id.toLowerCase();
-				const depPrefixLower = dep.prefix?.toLowerCase() || "";
+				const depPrefixLower = dep.prefix?.toLowerCase() || null;
 
-				// Find ALL matching jobs (important for matrix jobs)
+				// Try to find matching job by comparing names
 				const matchingJobs = jobs.filter((j) => {
 					const jobNameLower = j.name.toLowerCase();
+					const { prefix, base } = extractBaseName(jobNameLower);
+					const baseLower = base.toLowerCase();
 
+					// For jobs with prefix from reusable workflows
+					if (depPrefixLower) {
+						// The actual job must have a matching prefix
+						if (prefix && prefix === depPrefixLower) {
+							// And the base name must match either the job name or job_id
+							if (baseLower === depNameLower || baseLower === depJobIdLower) {
+								return true;
+							}
+						}
+						return false;
+					}
+
+					// For jobs without prefix (regular jobs)
 					// Exact match
 					if (jobNameLower === depNameLower || jobNameLower === depJobIdLower) {
 						return true;
 					}
 
-					// For reusable workflows: match "prefix / job_id" or "prefix / name"
-					// Also handle matrix jobs: "prefix / job_id (matrix values)"
-					if (depPrefixLower) {
-						const expectedWithPrefix = `${depPrefixLower} / ${depJobIdLower}`;
-						const expectedWithPrefixName = `${depPrefixLower} / ${depNameLower}`;
-						if (
-							jobNameLower === expectedWithPrefix ||
-							jobNameLower === expectedWithPrefixName ||
-							// Matrix job: starts with expected prefix and has " (" for matrix values
-							jobNameLower.startsWith(`${expectedWithPrefix} (`) ||
-							jobNameLower.startsWith(`${expectedWithPrefixName} (`)
-						) {
+					// Job might have matrix suffix: "job_name (matrix values)"
+					// Or prefix from somewhere: "prefix / job_name" or "prefix / job_name (matrix)"
+					if (baseLower === depNameLower || baseLower === depJobIdLower) {
+						// Only match if there's no prefix mismatch
+						// (prefix should be null for non-reusable workflow jobs)
+						if (!prefix) {
 							return true;
 						}
 					}
 
-					// Check if job name ends with " / job_id" or " / name" (GitHub workflow job naming)
-					if (
-						jobNameLower.endsWith(` / ${depNameLower}`) ||
-						jobNameLower.endsWith(` / ${depJobIdLower}`)
-					) {
-						return true;
-					}
-
-					// Also check for partial matches after splitting on " / "
-					const parts = jobNameLower.split(" / ");
-					if (parts.length > 1) {
-						const jobPart = parts[parts.length - 1];
-						if (jobPart === depNameLower || jobPart === depJobIdLower) {
-							return true;
-						}
-						// Handle matrix jobs: job part might be "job_id (matrix values)"
-						const jobPartBase = jobPart.split(" (")[0];
-						if (jobPartBase === depNameLower || jobPartBase === depJobIdLower) {
-							return true;
-						}
-					}
 					return false;
 				});
 
 				// Map all matching jobs
 				for (const matchingJob of matchingJobs) {
-					// Store first match for jobIdByName (for dependency resolution)
+					// Create a unique key for this job definition (considering prefix)
+					const depKey = dep.prefix
+						? `${dep.prefix}/${dep.job_id}`
+						: dep.job_id;
+					if (!jobIdByName.has(depKey)) {
+						jobIdByName.set(depKey, matchingJob.name);
+					}
+					// Also map just the job_id for resolving needs
 					if (!jobIdByName.has(dep.job_id)) {
 						jobIdByName.set(dep.job_id, matchingJob.name);
 					}
-					// Set dependencies for each matching job
+
 					dependencyMap.set(matchingJob.name, dep.needs);
 
-					// If this is a matrix job, record its base name for grouping
+					// Track matrix jobs for grouping
 					if (dep.is_matrix) {
-						// Base name is the job_id (possibly with prefix)
-						const baseName = depPrefixLower
-							? `${dep.prefix} / ${dep.job_id}`
-							: dep.job_id;
-						matrixJobBaseNames.set(matchingJob.name, baseName);
+						matrixJobBaseNames.set(
+							matchingJob.name,
+							dep.prefix ? `${dep.prefix} / ${dep.name}` : dep.name,
+						);
 					}
+				}
+			}
+		}
+
+		// FALLBACK: For jobs that weren't matched by workflow definition,
+		// infer dependencies from job name patterns (reusable workflow pattern)
+		// Jobs like "prefix / inner_job" where prefix is a reusable workflow caller
+		const fallbackJobsAdded: string[] = [];
+
+		// Group unmatched jobs by their prefix to build dependency chains
+		const unmatchedJobsByPrefix = new Map<string, WorkflowJob[]>();
+
+		for (const job of jobs) {
+			if (dependencyMap.has(job.name)) continue; // Already has dependencies from workflow def
+
+			const slashIdx = job.name.indexOf(" / ");
+			if (slashIdx > 0) {
+				const prefix = job.name.substring(0, slashIdx);
+				const innerPart = job.name.substring(slashIdx + 3);
+
+				// Group by prefix for building dependency chains
+				if (!unmatchedJobsByPrefix.has(prefix)) {
+					unmatchedJobsByPrefix.set(prefix, []);
+				}
+				unmatchedJobsByPrefix.get(prefix)!.push(job);
+				fallbackJobsAdded.push(job.name);
+
+				// Track for matrix grouping if it has matrix pattern
+				// Also handle truncated names that end with "..." but have " (" pattern
+				const endsWithParen = innerPart.endsWith(")");
+				const isTruncated = innerPart.endsWith("...");
+				const parenIdx = innerPart.indexOf(" ("); // Use indexOf to find FIRST " ("
+
+				if (parenIdx > 0 && (endsWithParen || isTruncated)) {
+					const baseName = innerPart.substring(0, parenIdx);
+					matrixJobBaseNames.set(job.name, `${prefix} / ${baseName}`);
+				}
+			}
+		}
+
+		// Build dependency chains for jobs with same prefix
+		// Jobs are chained in the order they appear, with matrix jobs depending on non-matrix jobs
+		for (const [, prefixJobs] of unmatchedJobsByPrefix) {
+			// Separate matrix jobs from non-matrix jobs
+			const nonMatrixJobs = prefixJobs.filter(
+				(j) => !matrixJobBaseNames.has(j.name),
+			);
+			const matrixJobs = prefixJobs.filter((j) =>
+				matrixJobBaseNames.has(j.name),
+			);
+
+			// Build a linear chain for non-matrix jobs
+			for (let i = 0; i < nonMatrixJobs.length; i++) {
+				const job = nonMatrixJobs[i];
+				if (i === 0) {
+					dependencyMap.set(job.name, []); // First job has no dependencies
+				} else {
+					// Each job depends on the previous one
+					const prevJobName = nonMatrixJobs[i - 1].name;
+					dependencyMap.set(job.name, [prevJobName]);
+					jobIdByName.set(prevJobName, prevJobName); // Ensure it can be resolved
+				}
+			}
+
+			// Matrix jobs depend on the last non-matrix job (if any)
+			const lastNonMatrixJob =
+				nonMatrixJobs.length > 0
+					? nonMatrixJobs[nonMatrixJobs.length - 1]
+					: null;
+			for (const job of matrixJobs) {
+				if (lastNonMatrixJob) {
+					dependencyMap.set(job.name, [lastNonMatrixJob.name]);
+					jobIdByName.set(lastNonMatrixJob.name, lastNonMatrixJob.name);
+				} else {
+					dependencyMap.set(job.name, []);
 				}
 			}
 		}
@@ -590,67 +691,57 @@ export function RunDetail() {
 		// Calculate depth for each job based on dependencies
 		const jobDepth = new Map<string, number>();
 
-		// Helper to resolve a job_id or name to the actual full job name
-		// contextJobName is used to infer prefix for relative lookups within the same workflow
+		// Helper to resolve a job_id to actual job name
+		// For reusable workflows, also check for prefixed versions
+		// contextPrefix is used when resolving needs within a reusable workflow
 		function resolveJobName(
 			nameOrId: string,
-			contextJobName?: string,
+			contextPrefix?: string,
 		): string | undefined {
-			// First, check if it's already a valid full job name
+			// First try direct matches
 			if (jobByName.has(nameOrId)) return nameOrId;
-			// Try mapped name from jobIdByName
-			const mappedName = jobIdByName.get(nameOrId);
-			if (mappedName) return mappedName;
+			if (jobIdByName.has(nameOrId)) return jobIdByName.get(nameOrId);
 
-			const nameOrIdLower = nameOrId.toLowerCase();
+			// If we have a context prefix, try to find a job with that prefix
+			if (contextPrefix) {
+				const prefixedName = `${contextPrefix} / ${nameOrId}`;
+				if (jobByName.has(prefixedName)) return prefixedName;
 
-			// If we have context (current job's full name), try to find a sibling with same prefix
-			if (contextJobName && contextJobName.includes(" / ") && jobs) {
-				// Extract prefix, handling matrix jobs (strip matrix values from context)
-				let contextForPrefix = contextJobName;
-				const matrixStart = contextJobName.lastIndexOf(" (");
-				if (matrixStart > contextJobName.lastIndexOf(" / ")) {
-					contextForPrefix = contextJobName.substring(0, matrixStart);
+				// Also check for matrix variants
+				for (const [jobName] of jobByName) {
+					if (jobName.startsWith(prefixedName + " (")) return jobName;
 				}
-
-				const contextParts = contextForPrefix.split(" / ");
-				const prefix = contextParts.slice(0, -1).join(" / ");
-				const expectedFullName = `${prefix} / ${nameOrId}`;
-
-				if (jobByName.has(expectedFullName)) {
-					return expectedFullName;
-				}
-
-				// Case-insensitive check, also handle matrix jobs in sibling
-				const expectedFullNameLower = expectedFullName.toLowerCase();
-				const siblingMatch = jobs.find((j) => {
-					const jNameLower = j.name.toLowerCase();
-					if (jNameLower === expectedFullNameLower) return true;
-					// Matrix job match: starts with expected name followed by " ("
-					if (jNameLower.startsWith(`${expectedFullNameLower} (`)) return true;
-					return false;
-				});
-				if (siblingMatch) return siblingMatch.name;
 			}
 
-			// Try suffix matching (for "workflow / job" format)
-			if (!jobs) return undefined;
-			const matchingJob = jobs.find((j) => {
-				const jobNameLower = j.name.toLowerCase();
-				if (jobNameLower === nameOrIdLower) return true;
-				if (jobNameLower.endsWith(` / ${nameOrIdLower}`)) return true;
-				// Handle matrix jobs: "prefix / job (matrix)" should match "job"
-				const parts = jobNameLower.split(" / ");
-				if (parts.length > 1) {
-					const jobPart = parts[parts.length - 1];
-					if (jobPart === nameOrIdLower) return true;
-					// Strip matrix values for comparison
-					const jobPartBase = jobPart.split(" (")[0];
-					if (jobPartBase === nameOrIdLower) return true;
+			// Try to find a job that matches with or without prefix/matrix
+			for (const [jobName] of jobByName) {
+				const lowerJobName = jobName.toLowerCase();
+				const lowerNameOrId = nameOrId.toLowerCase();
+
+				// Check if job name matches with or without prefix/matrix
+				if (lowerJobName === lowerNameOrId) return jobName;
+				if (lowerJobName.startsWith(lowerNameOrId + " (")) return jobName;
+				if (lowerJobName.startsWith(lowerNameOrId + " / ")) return jobName;
+
+				// Check if the base part matches (after stripping prefix and matrix)
+				const slashIdx = lowerJobName.indexOf(" / ");
+				if (slashIdx > 0) {
+					const afterSlash = lowerJobName.substring(slashIdx + 3);
+					if (afterSlash === lowerNameOrId) return jobName;
+					if (afterSlash.startsWith(lowerNameOrId + " (")) return jobName;
 				}
-				return false;
-			});
-			return matchingJob?.name;
+			}
+
+			return undefined;
+		}
+
+		// Helper to get the prefix from a job name
+		function getJobPrefix(jobName: string): string | undefined {
+			const slashIdx = jobName.indexOf(" / ");
+			if (slashIdx > 0) {
+				return jobName.substring(0, slashIdx);
+			}
+			return undefined;
 		}
 
 		function calculateDepth(jobName: string, visited: Set<string>): number {
@@ -666,17 +757,19 @@ export function RunDetail() {
 				return 0;
 			}
 
+			// Get the prefix of the current job for context-aware resolution
+			const contextPrefix = getJobPrefix(jobName);
+
 			let maxParentDepth = -1;
 			for (const needId of needs) {
-				// Map the need job_id to actual job name, using current job as context for prefix resolution
-				const needName = resolveJobName(needId, jobName);
+				// Map the need job_id to actual job name, using context prefix
+				const needName = resolveJobName(needId, contextPrefix);
 				if (needName) {
 					const parentDepth = calculateDepth(needName, new Set(visited));
 					maxParentDepth = Math.max(maxParentDepth, parentDepth);
 				}
 			}
 
-			// If we couldn't find any parents but had needs, set depth to 1 (depends on something at depth 0)
 			const depth = maxParentDepth >= 0 ? maxParentDepth + 1 : 1;
 			jobDepth.set(jobName, depth);
 			return depth;
@@ -699,16 +792,16 @@ export function RunDetail() {
 		// Build a set of jobs that have children (are depended upon by other jobs)
 		const jobsWithChildren = new Set<string>();
 		for (const [jobName, needs] of dependencyMap) {
+			const contextPrefix = getJobPrefix(jobName);
 			for (const needId of needs) {
-				// Use jobName as context for sibling resolution
-				const needName = resolveJobName(needId, jobName);
+				const needName = resolveJobName(needId, contextPrefix);
 				if (needName) {
 					jobsWithChildren.add(needName);
 				}
 			}
 		}
 
-		// Identify orphan jobs (no dependencies AND no children)
+		// Identify orphan jobs (no dependencies AND no children AND not part of a workflow group)
 		// These will be placed in the leftmost column (depth 0), below other jobs
 		const orphanJobs: WorkflowJob[] = [];
 		const connectedJobs: WorkflowJob[] = [];
@@ -717,99 +810,23 @@ export function RunDetail() {
 			const needs = dependencyMap.get(job.name) || [];
 			const hasChildren = jobsWithChildren.has(job.name);
 			const hasDependencies = needs.length > 0;
+			// A job is "connected" if it's in the dependency map (even with empty deps)
+			// This handles reusable workflow jobs that we couldn't get full info for
+			const isInDependencyMap = dependencyMap.has(job.name);
 
-			if (!hasChildren && !hasDependencies) {
+			if (!hasChildren && !hasDependencies && !isInDependencyMap) {
 				orphanJobs.push(job);
 			} else {
 				connectedJobs.push(job);
 			}
 		}
 
-		// Helper to extract base name from matrix job name (fallback if not in workflow definition)
-		// e.g., "workflow / validation (param1, param2)" -> "workflow / validation"
-		function getMatrixBaseNameFromJobName(jobName: string): string | undefined {
-			const trimmedName = jobName.trim();
-			if (!trimmedName.endsWith(")")) return undefined;
-			const lastParenIndex = trimmedName.lastIndexOf(" (");
-			if (lastParenIndex === -1) return undefined;
-			const baseName = trimmedName.substring(0, lastParenIndex).trim();
-			if (baseName.length === 0) return undefined;
-			return baseName;
-		}
-
-		// Group matrix jobs by their base name
-		// Use workflow definition's is_matrix flag as primary source, fallback to name parsing
-		const potentialMatrixGroups = new Map<string, WorkflowJob[]>();
-		const nonMatrixJobs: WorkflowJob[] = [];
-
-		for (const job of connectedJobs) {
-			// Check if this job is a matrix job based on workflow definition
-			let baseName = matrixJobBaseNames.get(job.name);
-
-			// Fallback: try to detect from job name pattern
-			if (!baseName) {
-				baseName = getMatrixBaseNameFromJobName(job.name);
-			}
-
-			if (baseName) {
-				if (!potentialMatrixGroups.has(baseName)) {
-					potentialMatrixGroups.set(baseName, []);
-				}
-				potentialMatrixGroups.get(baseName)?.push(job);
-			} else {
-				nonMatrixJobs.push(job);
-			}
-		}
-
-		// Only create groups for base names that have 2+ jobs
-		// Single matrix jobs are treated as regular jobs
-		const matrixGroups = new Map<string, WorkflowJob[]>();
-		for (const [baseName, groupJobs] of potentialMatrixGroups) {
-			if (groupJobs.length >= 2) {
-				matrixGroups.set(baseName, groupJobs);
-			} else {
-				// Single job - treat as non-matrix
-				nonMatrixJobs.push(...groupJobs);
-			}
-		}
-
-		// Create a mapping from matrix base name to group ID for edge connections
-		const matrixBaseToGroupId = new Map<string, string>();
-		const jobToGroupId = new Map<number, string>(); // job.id -> group node id
-
-		for (const [baseName] of matrixGroups) {
-			const groupId = `matrix-group-${baseName.replace(/[^a-zA-Z0-9]/g, "-")}`;
-			matrixBaseToGroupId.set(baseName, groupId);
-		}
-
-		// Assign depths for matrix groups (use the depth of any job in the group)
-		const groupDepths = new Map<string, number>();
-		for (const [baseName, groupJobs] of matrixGroups) {
-			// All matrix jobs in a group should have the same depth
-			const depth = jobDepth.get(groupJobs[0].name) ?? 0;
-			groupDepths.set(baseName, depth);
-			// Map each job to its group
-			for (const job of groupJobs) {
-				jobToGroupId.set(job.id, matrixBaseToGroupId.get(baseName)!);
-			}
-		}
-
-		// Group non-matrix connected jobs by depth
+		// Group connected jobs by depth
 		const groups = new Map<number, WorkflowJob[]>();
-		for (const job of nonMatrixJobs) {
+		for (const job of connectedJobs) {
 			const depth = jobDepth.get(job.name) ?? 0;
 			if (!groups.has(depth)) groups.set(depth, []);
 			groups.get(depth)?.push(job);
-		}
-
-		// Add matrix groups to depth groups as placeholders
-		// We'll track which groups are at each depth
-		const matrixGroupsByDepth = new Map<number, string[]>();
-		for (const [baseName, depth] of groupDepths) {
-			if (!matrixGroupsByDepth.has(depth)) {
-				matrixGroupsByDepth.set(depth, []);
-			}
-			matrixGroupsByDepth.get(depth)?.push(baseName);
 		}
 
 		// Sort connected jobs within each group: jobs with children first, then alphabetically
@@ -826,133 +843,269 @@ export function RunDetail() {
 		// Sort orphan jobs alphabetically
 		orphanJobs.sort((a, b) => a.name.localeCompare(b.name));
 
-		// Get all depths
-		const allDepths = new Set<number>();
-		for (const depth of groups.keys()) allDepths.add(depth);
-		for (const depth of matrixGroupsByDepth.keys()) allDepths.add(depth);
-		const depths = Array.from(allDepths).sort((a, b) => a - b);
+		// Helper to extract grouping key from job name for MATRIX grouping only
+		// Returns base name for matrix jobs (jobs with "(matrix values)" suffix)
+		// Also handles truncated job names (ending with "...") where the ")" was cut off
+		const getMatrixGroupKey = (jobName: string): string | null => {
+			// First check if we have explicit matrix info from workflow definition
+			if (matrixJobBaseNames.has(jobName)) {
+				return matrixJobBaseNames.get(jobName)!;
+			}
 
-		const spacing = { x: 400, y: 120 }; // Increased X spacing for matrix groups
-		const startX = 100;
-		const centerY = 200;
+			// Check for prefix pattern "prefix / rest"
+			const slashIdx = jobName.indexOf(" / ");
+			if (slashIdx > 0) {
+				const prefix = jobName.substring(0, slashIdx);
+				const rest = jobName.substring(slashIdx + 3);
+				// Check if this has matrix values (parentheses suffix)
+				// Also handle truncated names that end with "..." but have " (" pattern
+				const endsWithParen = rest.endsWith(")");
+				const isTruncated = rest.endsWith("...");
+				// Find parentheses - try " (" first, then just "("
+				let parenIdx = rest.indexOf(" (");
+				if (parenIdx < 0) {
+					parenIdx = rest.indexOf("(");
+				}
 
-		// First pass: layout connected jobs and matrix groups, track the maximum Y position
+				if (parenIdx > 0 && (endsWithParen || isTruncated)) {
+					// Return "prefix / base" as group key for matrix jobs
+					return prefix + " / " + rest.substring(0, parenIdx).trim();
+				}
+				// No matrix pattern - don't group by prefix alone
+				return null;
+			}
+			// Check for matrix pattern without prefix
+			const endsWithParen = jobName.endsWith(")");
+			const isTruncated = jobName.endsWith("...");
+			// Find parentheses - try " (" first, then just "("
+			let parenIdx = jobName.indexOf(" (");
+			if (parenIdx < 0) {
+				parenIdx = jobName.indexOf("(");
+			}
+
+			if (parenIdx > 0 && (endsWithParen || isTruncated)) {
+				return jobName.substring(0, parenIdx).trim();
+			}
+			return null;
+		};
+
+		// Also group jobs by their base name if multiple jobs share the same base
+		// This helps catch matrix jobs even if the pattern detection missed them
+		const potentialMatrixGroups = new Map<string, WorkflowJob[]>();
+		for (const job of connectedJobs) {
+			// Extract base name (everything before first parenthesis or the whole name)
+			let baseName = job.name;
+			const slashIdx = baseName.indexOf(" / ");
+			if (slashIdx > 0) {
+				baseName = baseName.substring(slashIdx + 3);
+			}
+			const parenIdx = baseName.indexOf("(");
+			if (parenIdx > 0) {
+				baseName = baseName.substring(0, parenIdx).trim();
+			}
+			// Include prefix in key if present
+			const fullKey =
+				slashIdx > 0
+					? job.name.substring(0, slashIdx) + " / " + baseName
+					: baseName;
+
+			if (!potentialMatrixGroups.has(fullKey)) {
+				potentialMatrixGroups.set(fullKey, []);
+			}
+			potentialMatrixGroups.get(fullKey)?.push(job);
+		}
+
+		// If multiple jobs share the same base name, add them to matrixJobBaseNames
+		for (const [baseName, groupJobs] of potentialMatrixGroups.entries()) {
+			if (groupJobs.length > 1) {
+				for (const job of groupJobs) {
+					if (!matrixJobBaseNames.has(job.name)) {
+						matrixJobBaseNames.set(job.name, baseName);
+					}
+				}
+			}
+		}
+
+		// Group matrix jobs by their base name for visual clustering
+		const matrixGroups = new Map<string, WorkflowJob[]>();
+		const standaloneJobs: WorkflowJob[] = [];
+
+		for (const job of connectedJobs) {
+			const groupKey = getMatrixGroupKey(job.name);
+			if (groupKey) {
+				if (!matrixGroups.has(groupKey)) {
+					matrixGroups.set(groupKey, []);
+				}
+				matrixGroups.get(groupKey)?.push(job);
+			} else {
+				standaloneJobs.push(job);
+			}
+		}
+
+		// Keep all matrix groups, even with single items, to show the matrix container
+
+		// Layout nodes
+		const depths = Array.from(groups.keys()).sort((a, b) => a - b);
+		const spacing = { x: 200, y: 90 }; // Minimal x for very short connections
+		const groupSpacing = { x: 380, y: 100 }; // Adjusted for larger groups
+		const startX = 30;
+		const centerY = 100;
+
+		// Track which jobs have been placed (to avoid duplicates)
+		const placedJobs = new Set<number>();
+
+		// First pass: layout standalone jobs and matrix groups by depth
 		let maxY = 0;
+		let groupIdCounter = 0;
+		// Map from groupKey -> group node ID for edge connections
+		const groupKeyToNodeId = new Map<string, string>();
 
 		depths.forEach((depth, col) => {
-			const nonMatrixGroup = groups.get(depth) || [];
-			const matrixGroupsAtDepth = matrixGroupsByDepth.get(depth) || [];
+			const depthJobs = groups.get(depth) || [];
+			let currentY = centerY;
 
-			// Calculate total items at this depth (non-matrix jobs + matrix groups)
-			const matrixGroupHeights = matrixGroupsAtDepth.map((baseName) => {
-				const groupJobs = matrixGroups.get(baseName) || [];
-				// Height for matrix group: base (padding + header) + jobs with spacing
-				return 44 + groupJobs.length * 52;
-			});
+			// Process jobs at this depth
+			for (const job of depthJobs) {
+				if (placedJobs.has(job.id)) continue;
 
-			const totalNonMatrixHeight = nonMatrixGroup.length * spacing.y;
-			const totalMatrixHeight = matrixGroupHeights.reduce(
-				(sum, h) => sum + h + 20,
-				0,
-			); // 20px gap between groups
-			const totalHeight = totalNonMatrixHeight + totalMatrixHeight;
+				const groupKey = getMatrixGroupKey(job.name);
+				const matrixGroup = groupKey ? matrixGroups.get(groupKey) : null;
 
-			let currentY = centerY - totalHeight / 2 + spacing.y / 2;
+				if (matrixGroup && matrixGroup.length >= 1) {
+					// Check if all jobs in this matrix group are at the same depth
+					const allSameDepth = matrixGroup.every(
+						(j) => jobDepth.get(j.name) === depth,
+					);
 
-			// Layout non-matrix jobs first
-			nonMatrixGroup.forEach((job) => {
-				maxY = Math.max(maxY, currentY);
+					if (allSameDepth && groupKey) {
+						// Layout matrix group as a cluster
+						const groupJobs = matrixGroup;
+						const innerSpacing = 85; // Vertical spacing between nodes inside group
+						const groupPadding = { top: 45, bottom: 25, left: 15, right: 15 };
+						const groupHeight =
+							groupPadding.top +
+							groupJobs.length * innerSpacing +
+							groupPadding.bottom;
+						const groupWidth = 350; // Larger width for better readability
+						const groupY = currentY;
 
-				// Calculate width based on job name length
-				const nodeWidth = estimateTextWidth(job.name);
+						// Create group container node
+						const groupNodeId = `group-${groupIdCounter}`;
+						groupKeyToNodeId.set(groupKey, groupNodeId);
+						nodeList.push({
+							id: groupNodeId,
+							type: "matrixGroup",
+							position: {
+								x: startX + col * groupSpacing.x,
+								y: groupY,
+							},
+							data: {
+								label: groupKey,
+								jobs: groupJobs,
+								width: groupWidth,
+								height: groupHeight,
+							},
+							draggable: true,
+							selectable: true,
+							connectable: false,
+						});
 
+						// Layout jobs inside the group (as children of the group node)
+						groupJobs.forEach((gJob, idx) => {
+							placedJobs.add(gJob.id);
+							nodeList.push({
+								id: `job-${gJob.id}`,
+								type: "jobNode",
+								// Position is relative to parent node
+								position: {
+									x: groupPadding.left,
+									y: groupPadding.top + idx * innerSpacing,
+								},
+								parentId: groupNodeId, // Makes this node a child of the group
+								extent: "parent" as const, // Constrain movement within parent
+								data: {
+									job: gJob,
+									selected: selectedJob?.id === gJob.id,
+									onClick: () => handleJobClick(gJob),
+								},
+								draggable: false, // Child nodes move with parent, not independently
+								selectable: true,
+								connectable: false,
+							});
+						});
+
+						currentY = groupY + groupHeight + spacing.y;
+						maxY = Math.max(maxY, currentY);
+						groupIdCounter++;
+					}
+				} else {
+					// Standalone job
+					placedJobs.add(job.id);
+					nodeList.push({
+						id: `job-${job.id}`,
+						type: "jobNode",
+						position: {
+							x: startX + col * groupSpacing.x,
+							y: currentY,
+						},
+						data: {
+							job,
+							selected: selectedJob?.id === job.id,
+							onClick: () => handleJobClick(job),
+						},
+						draggable: true,
+						selectable: true,
+						connectable: false,
+					});
+					currentY += spacing.y;
+					maxY = Math.max(maxY, currentY);
+				}
+			}
+		});
+
+		// Second pass: layout any remaining unplaced jobs
+		for (const job of connectedJobs) {
+			if (!placedJobs.has(job.id)) {
+				const depth = jobDepth.get(job.name) ?? 0;
+				placedJobs.add(job.id);
+				maxY += spacing.y;
 				nodeList.push({
 					id: `job-${job.id}`,
 					type: "jobNode",
 					position: {
-						x: startX + col * spacing.x,
-						y: currentY,
+						x: startX + depth * groupSpacing.x,
+						y: maxY,
 					},
 					data: {
 						job,
 						selected: selectedJob?.id === job.id,
 						onClick: () => handleJobClick(job),
-						width: nodeWidth,
 					},
 					draggable: true,
 					selectable: true,
 					connectable: false,
 				});
-				currentY += spacing.y;
-			});
+			}
+		}
 
-			// Layout matrix groups
-			matrixGroupsAtDepth.forEach((baseName, idx) => {
-				const groupJobs = matrixGroups.get(baseName) || [];
-				const groupId = matrixBaseToGroupId.get(baseName)!;
-				const groupHeight = matrixGroupHeights[idx];
-
-				maxY = Math.max(maxY, currentY + groupHeight);
-
-				// Extract short group name (last part after " / ")
-				const shortGroupName = baseName.includes(" / ")
-					? baseName.split(" / ").pop() || baseName
-					: baseName;
-
-				// Calculate width based on longest matrix parameter display name
-				// Matrix jobs display only the params part: "(param1, param2)" -> "param1, param2"
-				const maxJobWidth = Math.max(
-					...groupJobs.map((j) => {
-						const match = j.name.match(/\(([^)]+)\)$/);
-						const displayName = match ? match[1] : j.name;
-						return estimateTextWidth(displayName, "xs");
-					}),
-					estimateTextWidth(shortGroupName, "xs") + 20, // Header width + padding
-				);
-				const groupWidth = Math.max(maxJobWidth + 24, 120); // Add container padding, min 120px
-
-				nodeList.push({
-					id: groupId,
-					type: "matrixGroup",
-					position: {
-						x: startX + col * spacing.x,
-						y: currentY,
-					},
-					data: {
-						groupName: shortGroupName,
-						jobs: groupJobs,
-						selectedJobId: selectedJob?.id ?? null,
-						onJobClick: handleJobClick,
-						width: groupWidth,
-					},
-					draggable: true,
-					selectable: true,
-					connectable: false,
-				});
-
-				currentY += groupHeight + 20;
-			});
-		});
-
-		// Second pass: layout orphan jobs in the leftmost column, below all other jobs
+		// Third pass: layout orphan jobs in the leftmost column, below all other jobs
 		if (orphanJobs.length > 0) {
-			const orphanStartY = maxY + spacing.y; // Start below the lowest connected job
+			const orphanStartY = maxY + spacing.y;
 
 			orphanJobs.forEach((job, idx) => {
-				const nodeWidth = estimateTextWidth(job.name);
-
+				if (placedJobs.has(job.id)) return;
+				placedJobs.add(job.id);
 				nodeList.push({
 					id: `job-${job.id}`,
 					type: "jobNode",
 					position: {
-						x: startX, // Leftmost column
+						x: startX,
 						y: orphanStartY + idx * spacing.y,
 					},
 					data: {
 						job,
 						selected: selectedJob?.id === job.id,
 						onClick: () => handleJobClick(job),
-						width: nodeWidth,
 					},
 					draggable: true,
 					selectable: true,
@@ -962,183 +1115,375 @@ export function RunDetail() {
 		}
 
 		// Draw edges based on actual dependencies from workflow definition
-		// For matrix jobs, connect to/from the group node instead of individual jobs
-		const addedEdgeKeys = new Set<string>();
-
-		// Build edge data for path highlighting
-		const edgeData: { source: string; target: string; edgeKey: string }[] = [];
-		// Map from target node to its parent edges (for path tracing)
-		const parentEdgeMap = new Map<
-			string,
-			{ source: string; target: string }[]
-		>();
-
-		for (const job of jobs) {
-			const needs = dependencyMap.get(job.name) || [];
-			const targetId = jobToGroupId.get(job.id) || `job-${job.id}`;
-
+		// Helper to get all ancestors of a job (for transitive dependency filtering)
+		const ancestorCache = new Map<string, Set<string>>();
+		function getAncestors(jobName: string): Set<string> {
+			if (ancestorCache.has(jobName)) {
+				return ancestorCache.get(jobName)!;
+			}
+			const ancestors = new Set<string>();
+			const needs = dependencyMap.get(jobName) || [];
+			const contextPrefix = getJobPrefix(jobName);
 			for (const needId of needs) {
-				// Use current job name as context for sibling resolution
-				const parentName = resolveJobName(needId, job.name);
-				const parentJob = parentName ? jobByName.get(parentName) : undefined;
-
-				if (parentJob) {
-					// Check if parent is in a matrix group
-					const sourceId =
-						jobToGroupId.get(parentJob.id) || `job-${parentJob.id}`;
-					const edgeKey = `${sourceId}::${targetId}`; // Use :: as separator to avoid ambiguity
-
-					// Avoid duplicate edges (especially for matrix groups)
-					if (!addedEdgeKeys.has(edgeKey)) {
-						addedEdgeKeys.add(edgeKey);
-						edgeData.push({ source: sourceId, target: targetId, edgeKey });
-
-						// Store in parent map for path tracing
-						if (!parentEdgeMap.has(targetId)) {
-							parentEdgeMap.set(targetId, []);
-						}
-						parentEdgeMap
-							.get(targetId)
-							?.push({ source: sourceId, target: targetId });
+				const parentName = resolveJobName(needId, contextPrefix);
+				if (parentName) {
+					ancestors.add(parentName);
+					for (const ancestor of getAncestors(parentName)) {
+						ancestors.add(ancestor);
 					}
 				}
 			}
+			ancestorCache.set(jobName, ancestors);
+			return ancestors;
 		}
 
-		// Find path from selected node to root(s)
-		const highlightedEdgeKeys = new Set<string>();
+		// Filter out transitive dependencies (simplify visualization like GitHub)
+		function filterTransitiveDependencies(
+			jobName: string,
+			needs: string[],
+		): string[] {
+			if (needs.length <= 1) return needs;
+			const contextPrefix = getJobPrefix(jobName);
+			const resolvedNeeds = needs
+				.map((needId) => ({
+					needId,
+					jobName: resolveJobName(needId, contextPrefix),
+				}))
+				.filter((n) => n.jobName);
 
-		// Helper to get path color based on job status
-		const getPathColor = (
-			status: string,
-			conclusion: string | null,
-		): { stroke: string; glow: string } => {
-			if (status === "in_progress") {
-				return { stroke: "#3b82f6", glow: "rgba(59, 130, 246, 0.6)" }; // blue-500
-			}
-			if (status === "queued" || status === "pending" || status === "waiting") {
-				return { stroke: "#f59e0b", glow: "rgba(245, 158, 11, 0.6)" }; // amber-500
-			}
-			if (conclusion === "success") {
-				return { stroke: "#10b981", glow: "rgba(16, 185, 129, 0.6)" }; // emerald-500
-			}
-			if (conclusion === "failure") {
-				return { stroke: "#ef4444", glow: "rgba(239, 68, 68, 0.6)" }; // red-500
-			}
-			if (conclusion === "skipped") {
-				return { stroke: "#9ca3af", glow: "rgba(156, 163, 175, 0.6)" }; // gray-400
-			}
-			return { stroke: "#f59e0b", glow: "rgba(245, 158, 11, 0.6)" }; // amber-500 default
-		};
-
-		// Get the selected job's path color
-		const pathColors = selectedJob
-			? getPathColor(selectedJob.status, selectedJob.conclusion)
-			: { stroke: "#10b981", glow: "rgba(16, 185, 129, 0.6)" };
-
-		if (selectedJob) {
-			const selectedNodeId =
-				jobToGroupId.get(selectedJob.id) || `job-${selectedJob.id}`;
-
-			// BFS to find all edges on paths to root
-			const queue: string[] = [selectedNodeId];
-			const visited = new Set<string>();
-
-			while (queue.length > 0) {
-				const currentId = queue.shift()!;
-				if (visited.has(currentId)) continue;
-				visited.add(currentId);
-
-				const parentEdges = parentEdgeMap.get(currentId) || [];
-				for (const edge of parentEdges) {
-					highlightedEdgeKeys.add(`${edge.source}::${edge.target}`);
-					queue.push(edge.source);
+			const filtered: string[] = [];
+			for (const need of resolvedNeeds) {
+				const isTransitive = resolvedNeeds.some((other) => {
+					if (other.needId === need.needId) return false;
+					const ancestors = getAncestors(other.jobName!);
+					return ancestors.has(need.jobName!);
+				});
+				if (!isTransitive) {
+					filtered.push(need.needId);
 				}
 			}
+			return filtered;
 		}
 
-		// Create edges with highlighting
-		for (const { source: sourceId, target: targetId, edgeKey } of edgeData) {
-			const isHighlighted = highlightedEdgeKeys.has(edgeKey);
+		// Track edges already created to avoid duplicates
+		const createdEdges = new Set<string>();
 
-			// Find if any job in the edge path is in progress
-			const targetJob = jobs.find((j) => `job-${j.id}` === targetId);
-			const jobBaseName = targetJob
-				? matrixJobBaseNames.get(targetJob.name) ||
-					getMatrixBaseNameFromJobName(targetJob.name)
-				: undefined;
-			const groupHasInProgress =
-				jobBaseName &&
-				matrixGroups.get(jobBaseName)?.some((j) => j.status === "in_progress");
-			const isAnimated =
-				(targetJob && targetJob.status === "in_progress") ||
-				(targetJob && jobToGroupId.has(targetJob.id) && !!groupHasInProgress);
+		// For matrix groups, we want edges to connect to the group container node
+		// This creates a cleaner visualization with edges going to/from the group box
+		const getRepresentativeJobId = (job: WorkflowJob): string => {
+			const groupKey = getMatrixGroupKey(job.name);
+			// If this job is part of a matrix group, return the group node ID
+			if (groupKey && groupKeyToNodeId.has(groupKey)) {
+				return groupKeyToNodeId.get(groupKey)!;
+			}
+			return `job-${job.id}`;
+		};
 
-			edgeList.push({
-				id: `edge-${sourceId}-${targetId}`,
-				source: sourceId,
-				target: targetId,
-				animated: isAnimated || isHighlighted,
-				style: isHighlighted
-					? {
-							stroke: pathColors.stroke,
-							strokeWidth: 3,
-							filter: `drop-shadow(0 0 6px ${pathColors.glow})`,
-						}
-					: { stroke: "#6b7280", strokeWidth: 2 },
-				type: "smoothstep",
-			});
+		for (const job of jobs) {
+			const allNeeds = dependencyMap.get(job.name) || [];
+			const needs = filterTransitiveDependencies(job.name, allNeeds);
+			const contextPrefix = getJobPrefix(job.name);
+
+			for (const needId of needs) {
+				const needName = resolveJobName(needId, contextPrefix);
+				const parentJob = needName ? jobByName.get(needName) : undefined;
+
+				if (parentJob) {
+					const sourceId = getRepresentativeJobId(parentJob);
+					const targetId = getRepresentativeJobId(job);
+					const edgeKey = `${sourceId}-${targetId}`;
+
+					// Skip duplicate edges (can happen with matrix groups)
+					if (createdEdges.has(edgeKey)) continue;
+					createdEdges.add(edgeKey);
+
+					// Check if either job is part of a matrix group
+					const sourceGroupKey = getMatrixGroupKey(parentJob.name);
+					const targetGroupKey = getMatrixGroupKey(job.name);
+					const isSourceInGroup =
+						sourceGroupKey && matrixGroups.has(sourceGroupKey);
+					const isTargetInGroup =
+						targetGroupKey && matrixGroups.has(targetGroupKey);
+
+					edgeList.push({
+						id: `edge-${edgeKey}`,
+						source: sourceId,
+						target: targetId,
+						animated:
+							job.status === "in_progress" ||
+							parentJob.status === "in_progress",
+						style: {
+							stroke:
+								isSourceInGroup || isTargetInGroup ? "#4ade80" : "#6b7280",
+							strokeWidth: 2,
+							strokeLinecap: "round",
+							strokeLinejoin: "round",
+						},
+						type: "default",
+					});
+				}
+			}
 		}
 
 		return { nodes: nodeList, edges: edgeList };
 	}, [jobs, workflowDefinition, selectedJob, handleJobClick]);
 
-	// Use React Flow state management for draggable nodes
-	const [flowNodes, setFlowNodes, onNodesChange] = useNodesState<Node>([]);
-	const [flowEdges, setFlowEdges, onEdgesChange] = useEdgesState<Edge>([]);
+	// State management for ReactFlow nodes and edges
+	const [stateNodes, setStateNodes, onNodesChange] = useNodesState<Node>([]);
+	const [stateEdges, setStateEdges, onEdgesChange] = useEdgesState<Edge>([]);
+	const { fitView } = useReactFlow();
 
-	// Track if initial auto-layout has been done
-	const hasInitialLayoutRef = useRef(false);
+	// Track if state has been synced with current data
+	const syncedNodesKeyRef = useRef<string>("");
 
-	// Sync computed nodes/edges with React Flow state when they change
+	// Track the last jobs data fetch timestamp to detect new data loads
+	const lastJobsLoadRef = useRef<number>(0);
+
+	// Create a stable key based on job IDs to detect data changes
+	const currentNodesKey = useMemo(
+		() =>
+			nodes
+				.map((n) => n.id)
+				.sort((a, b) => a.localeCompare(b))
+				.join(","),
+		[nodes],
+	);
+
+	// Check if state is synced with current nodes
+	const isStateSynced =
+		syncedNodesKeyRef.current === currentNodesKey && currentNodesKey !== "";
+
+	// Compute fresh layout from source nodes
+	const freshLayout = useMemo(() => {
+		if (nodes.length === 0) {
+			return { nodes: [] as Node[], edges: [] as Edge[] };
+		}
+		return getLayoutedElements(nodes, edges, "LR");
+	}, [nodes, edges]);
+
+	// Get base nodes (either from state or fresh layout)
+	const baseNodes = isStateSynced ? stateNodes : freshLayout.nodes;
+	const baseEdges = isStateSynced ? stateEdges : freshLayout.edges;
+
+	// Update node selection state and edge animation based on selectedJob
+	const layoutedNodes = useMemo(() => {
+		return baseNodes.map((node) => {
+			// Extract job id from node id (format: "job-123")
+			const jobIdMatch = /^job-(\d+)$/.exec(node.id);
+			const nodeData = node.data as {
+				job?: WorkflowJob;
+				selected?: boolean;
+				onClick?: () => void;
+			};
+			if (jobIdMatch && nodeData?.job) {
+				const isSelected = selectedJob?.id === nodeData.job.id;
+				return {
+					...node,
+					data: {
+						...nodeData,
+						selected: isSelected,
+					},
+				};
+			}
+			return node;
+		});
+	}, [baseNodes, selectedJob]);
+
+	// Find all edges that lead to the selected node (for animation)
+	const selectedNodeId = selectedJob ? `job-${selectedJob.id}` : null;
+
+	// Find the parent group ID if the selected node is inside a matrix group
+	const selectedNodeParentId = useMemo(() => {
+		if (!selectedNodeId) return null;
+		const selectedNode = baseNodes.find((n) => n.id === selectedNodeId);
+		return selectedNode?.parentId || null;
+	}, [selectedNodeId, baseNodes]);
+
+	// Get all ancestor node IDs that connect to the selected node (or its parent group)
+	const ancestorNodeIds = useMemo(() => {
+		if (!selectedNodeId) return new Set<string>();
+
+		const ancestors = new Set<string>();
+		const visited = new Set<string>();
+
+		// Start BFS from both the selected node and its parent group (if any)
+		const startNodes = [selectedNodeId];
+		if (selectedNodeParentId) {
+			startNodes.push(selectedNodeParentId);
+		}
+
+		const queue = [...startNodes];
+		while (queue.length > 0) {
+			const currentId = queue.shift();
+			if (!currentId || visited.has(currentId)) continue;
+			visited.add(currentId);
+
+			// Find all edges where this node is the target
+			for (const edge of baseEdges) {
+				if (edge.target === currentId && !visited.has(edge.source)) {
+					ancestors.add(edge.source);
+					queue.push(edge.source);
+				}
+			}
+		}
+
+		return ancestors;
+	}, [selectedNodeId, selectedNodeParentId, baseEdges]);
+
+	// Get the color for the selected node based on its status
+	const selectedNodeColor = selectedJob
+		? getJobEdgeColor(selectedJob.status, selectedJob.conclusion)
+		: "#10b981";
+
+	// Build a map from node ID to job for edge coloring
+	const nodeIdToJob = useMemo(() => {
+		const map = new Map<string, WorkflowJob>();
+		if (jobs) {
+			for (const job of jobs) {
+				map.set(`job-${job.id}`, job);
+			}
+		}
+		return map;
+	}, [jobs]);
+
+	// Build a map from group node ID to jobs for matrix group edge coloring
+	const groupIdToJobs = useMemo(() => {
+		const map = new Map<string, WorkflowJob[]>();
+		for (const node of baseNodes) {
+			if (node.type === "matrixGroup" && node.data?.jobs) {
+				map.set(node.id, node.data.jobs as WorkflowJob[]);
+			}
+		}
+		return map;
+	}, [baseNodes]);
+
+	// Update edges with animation for paths leading to selected node
+	// Color each edge based on its target node's status
+	const layoutedEdges = useMemo(() => {
+		return baseEdges.map((edge) => {
+			// Check if this edge is part of the path to the selected node or its parent group
+			const isPathToSelected =
+				selectedNodeId &&
+				(edge.target === selectedNodeId ||
+					edge.target === selectedNodeParentId ||
+					ancestorNodeIds.has(edge.target));
+
+			// Get the target color - check if it's a matrix group first
+			let targetColor = "#6b7280"; // gray-500 default
+			const groupJobs = groupIdToJobs.get(edge.target);
+			if (groupJobs) {
+				// Target is a matrix group - use aggregate color
+				targetColor = getGroupEdgeColor(groupJobs);
+			} else {
+				// Target is a regular job node
+				const targetJob = nodeIdToJob.get(edge.target);
+				if (targetJob) {
+					targetColor = getJobEdgeColor(targetJob.status, targetJob.conclusion);
+				}
+			}
+
+			return {
+				...edge,
+				type: "default", // Force bezier curves - no 90 degree angles
+				animated: isPathToSelected || edge.animated,
+				style: {
+					...edge.style,
+					stroke: isPathToSelected ? selectedNodeColor : targetColor,
+					strokeWidth: isPathToSelected ? 3 : edge.style?.strokeWidth || 2,
+					strokeLinecap: "round" as const,
+					strokeLinejoin: "round" as const,
+				},
+			};
+		});
+	}, [
+		baseEdges,
+		selectedNodeId,
+		selectedNodeParentId,
+		ancestorNodeIds,
+		selectedNodeColor,
+		nodeIdToJob,
+		groupIdToJobs,
+	]);
+
+	// Sync state with fresh layout when nodes change
+	useLayoutEffect(() => {
+		if (currentNodesKey !== syncedNodesKeyRef.current && nodes.length > 0) {
+			syncedNodesKeyRef.current = currentNodesKey;
+			setStateNodes(freshLayout.nodes);
+			setStateEdges(freshLayout.edges);
+		}
+	}, [
+		currentNodesKey,
+		nodes.length,
+		freshLayout,
+		setStateNodes,
+		setStateEdges,
+	]);
+
+	// Auto-apply layout on every data load (first load, refresh, or data refetch)
 	useEffect(() => {
-		setFlowNodes(nodes);
-		setFlowEdges(edges);
-	}, [nodes, edges, setFlowNodes, setFlowEdges]);
+		if (!jobs || jobs.length === 0 || nodes.length === 0) return;
 
-	// Auto-layout: use dagre to calculate optimal positions
-	const handleAutoLayout = useCallback(() => {
-		const { nodes: layoutedNodes } = getLayoutedElements(
-			flowNodes,
-			flowEdges,
+		// Use a timestamp-based approach to detect new data loads
+		const currentLoadTime = Date.now();
+		if (currentLoadTime - lastJobsLoadRef.current < 100) return; // Debounce
+		lastJobsLoadRef.current = currentLoadTime;
+
+		// Apply the dagre layout
+		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+			nodes,
+			edges,
 			"LR",
 		);
-		setFlowNodes(layoutedNodes);
-	}, [flowNodes, flowEdges, setFlowNodes]);
 
-	// Trigger initial auto-layout when nodes and edges are first populated
-	// Uses the computed nodes/edges from useMemo (not flowNodes) to ensure we trigger
-	// when the data is first ready, not on every flow state change
+		setStateNodes(layoutedNodes);
+		setStateEdges(layoutedEdges);
+		syncedNodesKeyRef.current = currentNodesKey;
+
+		// Fit view after layout is applied
+		setTimeout(() => {
+			fitView({ padding: 0.2, maxZoom: 1 });
+		}, 50);
+	}, [
+		jobs,
+		nodes,
+		edges,
+		currentNodesKey,
+		setStateNodes,
+		setStateEdges,
+		fitView,
+	]);
+
+	// Fit view after layout syncs
 	useEffect(() => {
-		// Only run once when we have nodes and workflow definition has loaded
-		if (
-			!hasInitialLayoutRef.current &&
-			nodes.length > 0 &&
-			workflowDefinition !== undefined // Definition has been fetched (even if empty)
-		) {
-			hasInitialLayoutRef.current = true;
-			// Small delay to ensure React Flow has rendered the nodes
-			const timer = setTimeout(() => {
-				const { nodes: layoutedNodes } = getLayoutedElements(
-					nodes,
-					edges,
-					"LR",
-				);
-				setFlowNodes(layoutedNodes);
+		if (isStateSynced && layoutedNodes.length > 0) {
+			setTimeout(() => {
+				fitView({ padding: 0.2, maxZoom: 1 });
 			}, 100);
-			return () => clearTimeout(timer);
 		}
-	}, [nodes, edges, workflowDefinition, setFlowNodes]);
+	}, [isStateSynced, layoutedNodes.length, fitView]);
+
+	// Apply dagre layout to nodes and edges (for manual re-layout button)
+	const applyLayout = useCallback(() => {
+		if (nodes.length === 0) return;
+
+		const { nodes: newNodes, edges: newEdges } = getLayoutedElements(
+			nodes,
+			edges,
+			"LR",
+		);
+
+		setStateNodes(newNodes);
+		setStateEdges(newEdges);
+
+		// Fit view after layout is applied
+		setTimeout(() => {
+			fitView({ padding: 0.2, maxZoom: 1 });
+		}, 50);
+	}, [nodes, edges, setStateNodes, setStateEdges, fitView]);
+
+	// Track if layout is ready
+	const isLayoutReady = layoutedNodes.length > 0;
 
 	const handleViewLogs = useCallback(async () => {
 		if (!selectedJob) return;
@@ -1360,21 +1705,30 @@ export function RunDetail() {
 			{/* Main Content - Graph and Right Panel */}
 			<div className="flex-1 flex min-h-0">
 				{/* ReactFlow Graph - Main Area */}
-				<div className="flex-1 relative bg-slate-100 dark:bg-slate-900">
-					{jobsLoading ? (
+				<div
+					className={cn(
+						"flex-1 relative",
+						isDark ? "bg-slate-900" : "bg-gray-50",
+					)}
+				>
+					{jobsLoading || (jobs && jobs.length > 0 && !isLayoutReady) ? (
 						<div className="flex items-center justify-center h-full">
 							<Loader2 className="w-8 h-8 animate-spin text-primary-500" />
 						</div>
-					) : jobs && jobs.length > 0 ? (
-						<ReactFlowProvider>
+					) : jobs && jobs.length > 0 && isLayoutReady ? (
+						<>
 							<ReactFlow
-								nodes={flowNodes}
-								edges={flowEdges}
+								nodes={layoutedNodes}
+								edges={layoutedEdges}
 								onNodesChange={onNodesChange}
 								onEdgesChange={onEdgesChange}
 								nodeTypes={nodeTypes}
+								defaultEdgeOptions={{
+									type: "default",
+									style: { strokeLinecap: "round", strokeLinejoin: "round" },
+								}}
 								fitView
-								fitViewOptions={{ padding: 0.5, maxZoom: 0.85 }}
+								fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
 								minZoom={0.3}
 								maxZoom={1.5}
 								proOptions={{ hideAttribution: true }}
@@ -1391,63 +1745,147 @@ export function RunDetail() {
 									if (job) handleJobClick(job);
 								}}
 								onPaneClick={() => {
+									// Deselect job when clicking on background
 									setSelectedJob(null);
+									setStepsExpanded(false);
 								}}
 							>
 								<Background
-									color={isDark ? "#334155" : "#94a3b8"}
+									color={isDark ? "#334155" : "#d1d5db"}
 									gap={20}
 									size={1}
 								/>
 								<Controls
 									showInteractive={false}
-									className="!bg-white dark:!bg-slate-800 !border-slate-300 dark:!border-slate-600 !rounded-lg !shadow-xl [&>button]:!bg-slate-100 dark:[&>button]:!bg-slate-700 [&>button]:!border-slate-300 dark:[&>button]:!border-slate-600 [&>button]:!text-slate-700 dark:[&>button]:!text-slate-300 [&>button:hover]:!bg-slate-200 dark:[&>button:hover]:!bg-slate-600 [&>button]:!w-7 [&>button]:!h-7 [&>button>svg]:!fill-slate-700 dark:[&>button>svg]:!fill-slate-300"
+									className={cn(
+										"!rounded-lg !shadow-xl [&>button]:!w-7 [&>button]:!h-7",
+										isDark
+											? "!bg-slate-800 !border-slate-600 [&>button]:!bg-slate-700 [&>button]:!border-slate-600 [&>button]:!text-slate-300 [&>button:hover]:!bg-slate-600 [&>button>svg]:!fill-slate-300"
+											: "!bg-white !border-gray-300 [&>button]:!bg-gray-100 [&>button]:!border-gray-300 [&>button]:!text-gray-700 [&>button:hover]:!bg-gray-200 [&>button>svg]:!fill-gray-600",
+									)}
 								/>
-								<FlowPanelControls onAutoLayout={handleAutoLayout} />
 							</ReactFlow>
-						</ReactFlowProvider>
+							{/* Auto-layout button */}
+							<button
+								type="button"
+								onClick={applyLayout}
+								className={cn(
+									"absolute top-3 right-3 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-lg z-10",
+									isDark
+										? "bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-200"
+										: "bg-white hover:bg-gray-100 border border-gray-300 text-gray-700",
+								)}
+								title="Auto-arrange nodes"
+							>
+								<LayoutGrid className="w-4 h-4" />
+								Auto Layout
+							</button>
+						</>
 					) : run.conclusion === "failure" ? (
 						<div className="flex flex-col items-center justify-center h-full p-8 overflow-auto">
-							<div className="bg-gradient-to-br from-red-100 to-red-50 dark:from-red-950/50 dark:to-red-900/30 border border-red-300 dark:border-red-700/50 rounded-2xl p-8 max-w-2xl w-full shadow-2xl shadow-red-200/50 dark:shadow-red-900/20">
+							<div
+								className={cn(
+									"border rounded-2xl p-8 max-w-2xl w-full shadow-2xl",
+									isDark
+										? "bg-gradient-to-br from-red-950/50 to-red-900/30 border-red-700/50 shadow-red-900/20"
+										: "bg-gradient-to-br from-red-50 to-red-100/50 border-red-200 shadow-red-200/50",
+								)}
+							>
 								{/* Header */}
 								<div className="text-center mb-6">
-									<div className="w-16 h-16 rounded-full bg-red-100 dark:bg-red-600/20 border border-red-300 dark:border-red-500/40 flex items-center justify-center mx-auto mb-4">
-										<AlertTriangle className="w-8 h-8 text-red-500 dark:text-red-400" />
+									<div
+										className={cn(
+											"w-16 h-16 rounded-full border flex items-center justify-center mx-auto mb-4",
+											isDark
+												? "bg-red-600/20 border-red-500/40"
+												: "bg-red-100 border-red-300",
+										)}
+									>
+										<AlertTriangle
+											className={cn(
+												"w-8 h-8",
+												isDark ? "text-red-400" : "text-red-500",
+											)}
+										/>
 									</div>
-									<h3 className="text-xl font-bold text-red-900 dark:text-white mb-2">
+									<h3
+										className={cn(
+											"text-xl font-bold mb-2",
+											isDark ? "text-white" : "text-gray-900",
+										)}
+									>
 										Workflow Failed
 									</h3>
-									<p className="text-red-600/70 dark:text-gray-400 text-sm">
+									<p
+										className={cn(
+											"text-sm",
+											isDark ? "text-gray-400" : "text-gray-600",
+										)}
+									>
 										This workflow failed before any jobs could be executed
 									</p>
 								</div>
 
 								{/* Annotations */}
 								{annotationsLoading ? (
-									<div className="flex items-center justify-center gap-3 text-red-600/70 dark:text-gray-400 text-sm py-6 mb-6 bg-red-50 dark:bg-slate-800/50 rounded-xl border border-red-200 dark:border-slate-700/50">
-										<Loader2 className="w-5 h-5 animate-spin text-red-500 dark:text-red-400" />
+									<div
+										className={cn(
+											"flex items-center justify-center gap-3 text-sm py-6 mb-6 rounded-xl border",
+											isDark
+												? "text-gray-400 bg-slate-800/50 border-slate-700/50"
+												: "text-gray-500 bg-gray-100 border-gray-200",
+										)}
+									>
+										<Loader2 className="w-5 h-5 animate-spin text-red-400" />
 										Loading error details...
 									</div>
 								) : annotations && annotations.length > 0 ? (
 									<div className="space-y-3 mb-6">
-										<h4 className="text-xs font-semibold text-red-600/70 dark:text-gray-400 uppercase tracking-wider">
+										<h4
+											className={cn(
+												"text-xs font-semibold uppercase tracking-wider",
+												isDark ? "text-gray-400" : "text-gray-500",
+											)}
+										>
 											Error Details
 										</h4>
 										{annotations.map((annotation) => (
 											<div
 												key={`${annotation.path}-${annotation.start_line}-${annotation.message.slice(0, 50)}`}
-												className="bg-white dark:bg-slate-900/70 rounded-xl p-4 border border-red-200 dark:border-red-600/30"
+												className={cn(
+													"rounded-xl p-4 border",
+													isDark
+														? "bg-slate-900/70 border-red-600/30"
+														: "bg-white border-red-200",
+												)}
 											>
 												{annotation.title && (
-													<p className="font-semibold text-red-600 dark:text-red-300 mb-2">
+													<p
+														className={cn(
+															"font-semibold mb-2",
+															isDark ? "text-red-300" : "text-red-600",
+														)}
+													>
 														{annotation.title}
 													</p>
 												)}
-												<p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono text-sm leading-relaxed">
+												<p
+													className={cn(
+														"whitespace-pre-wrap font-mono text-sm leading-relaxed",
+														isDark ? "text-gray-200" : "text-gray-700",
+													)}
+												>
 													{annotation.message}
 												</p>
 												{annotation.path && (
-													<p className="text-gray-500 text-xs mt-3 font-mono bg-red-50 dark:bg-slate-800/50 inline-block px-2 py-1 rounded">
+													<p
+														className={cn(
+															"text-xs mt-3 font-mono inline-block px-2 py-1 rounded",
+															isDark
+																? "text-gray-500 bg-slate-800/50"
+																: "text-gray-500 bg-gray-100",
+														)}
+													>
 														📁 {annotation.path}
 														{annotation.start_line > 0 &&
 															`:${annotation.start_line}`}
@@ -1460,11 +1898,28 @@ export function RunDetail() {
 										))}
 									</div>
 								) : (
-									<div className="text-center py-6 mb-6 bg-red-50 dark:bg-slate-800/30 rounded-xl border border-red-200 dark:border-slate-700/50">
-										<p className="text-red-600/70 dark:text-gray-400 text-sm mb-2">
+									<div
+										className={cn(
+											"text-center py-6 mb-6 rounded-xl border",
+											isDark
+												? "bg-slate-800/30 border-slate-700/50"
+												: "bg-gray-50 border-gray-200",
+										)}
+									>
+										<p
+											className={cn(
+												"text-sm mb-2",
+												isDark ? "text-gray-400" : "text-gray-600",
+											)}
+										>
 											Error details not available via API
 										</p>
-										<p className="text-red-500/60 dark:text-gray-500 text-xs">
+										<p
+											className={cn(
+												"text-xs",
+												isDark ? "text-gray-500" : "text-gray-500",
+											)}
+										>
 											This usually happens with workflow syntax errors.
 											<br />
 											Check GitHub for the full error message.
@@ -1478,7 +1933,7 @@ export function RunDetail() {
 										href={run.html_url}
 										target="_blank"
 										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 rounded-xl !text-white hover:!text-white font-medium transition-all shadow-lg shadow-red-200 dark:shadow-red-900/30 hover:shadow-red-300 dark:hover:shadow-red-900/50"
+										className="inline-flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 rounded-xl !text-white hover:!text-white font-medium transition-all shadow-lg shadow-red-900/30 hover:shadow-red-900/50"
 									>
 										<ExternalLink className="w-4 h-4" />
 										View Details on GitHub
@@ -1638,24 +2093,22 @@ export function RunDetail() {
 							) : run.conclusion === "failure" ? (
 								<div className="p-4">
 									{/* Header */}
-									<div className="flex items-center gap-3 mb-4 p-3 bg-red-100 dark:bg-red-950/40 rounded-xl border border-red-200 dark:border-red-700/30">
-										<div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-600/20 border border-red-300 dark:border-red-500/30 flex items-center justify-center flex-shrink-0">
-											<AlertTriangle className="w-5 h-5 text-red-500 dark:text-red-400" />
+									<div className="flex items-center gap-3 mb-4 p-3 bg-red-950/40 rounded-xl border border-red-700/30">
+										<div className="w-10 h-10 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center flex-shrink-0">
+											<AlertTriangle className="w-5 h-5 text-red-400" />
 										</div>
 										<div>
-											<p className="text-sm font-semibold text-red-900 dark:text-white">
+											<p className="text-sm font-semibold text-white">
 												Workflow Failed
 											</p>
-											<p className="text-xs text-red-600/70 dark:text-gray-400">
-												No jobs executed
-											</p>
+											<p className="text-xs text-gray-400">No jobs executed</p>
 										</div>
 									</div>
 
 									{/* Show annotations in right panel */}
 									{annotationsLoading ? (
-										<div className="flex items-center justify-center gap-2 text-red-600/70 dark:text-gray-400 text-xs py-4 bg-red-50 dark:bg-slate-800/50 rounded-lg">
-											<Loader2 className="w-3 h-3 animate-spin text-red-500 dark:text-red-400" />
+										<div className="flex items-center justify-center gap-2 text-gray-400 text-xs py-4 bg-slate-800/50 rounded-lg">
+											<Loader2 className="w-3 h-3 animate-spin text-red-400" />
 											Loading errors...
 										</div>
 									) : annotations && annotations.length > 0 ? (
@@ -1663,14 +2116,14 @@ export function RunDetail() {
 											{annotations.slice(0, 3).map((annotation) => (
 												<div
 													key={`${annotation.path}-${annotation.start_line}-${annotation.message.slice(0, 30)}`}
-													className="bg-white dark:bg-slate-800/70 border border-red-200 dark:border-red-600/20 rounded-lg p-3"
+													className="bg-slate-800/70 border border-red-600/20 rounded-lg p-3"
 												>
 													{annotation.title && (
-														<p className="font-medium text-red-600 dark:text-red-300 text-xs mb-1 truncate">
+														<p className="font-medium text-red-300 text-xs mb-1 truncate">
 															{annotation.title}
 														</p>
 													)}
-													<p className="text-gray-700 dark:text-gray-300 text-xs line-clamp-2">
+													<p className="text-gray-300 text-xs line-clamp-2">
 														{annotation.message}
 													</p>
 												</div>
@@ -1682,8 +2135,8 @@ export function RunDetail() {
 											)}
 										</div>
 									) : (
-										<div className="text-center py-3 mb-4 bg-red-50 dark:bg-slate-800/30 rounded-lg border border-red-200 dark:border-slate-700/50">
-											<p className="text-xs text-red-500/70 dark:text-gray-500">
+										<div className="text-center py-3 mb-4 bg-slate-800/30 rounded-lg border border-slate-700/50">
+											<p className="text-xs text-gray-500">
 												Error details not available via API
 											</p>
 										</div>
@@ -1838,4 +2291,13 @@ function StepStatusIcon({ conclusion }: { conclusion: string | null }) {
 		return <Clock className="w-3 h-3 text-gray-400 flex-shrink-0" />;
 	}
 	return <Clock className="w-3 h-3 text-gray-400 flex-shrink-0" />;
+}
+
+// Wrapper component that provides ReactFlow context
+export function RunDetail() {
+	return (
+		<ReactFlowProvider>
+			<RunDetailInner />
+		</ReactFlowProvider>
+	);
 }

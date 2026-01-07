@@ -15,9 +15,9 @@ export default defineConfig({
             "/api": {
                 target: "http://localhost:8080",
                 changeOrigin: true,
-                configure: function (proxy) {
+                configure: (proxy) => {
                     // Silence proxy errors for long-running requests
-                    proxy.on("error", function (err, _req, res) {
+                    proxy.on("error", (err, _req, res) => {
                         if (err.message.includes("socket hang up") || err.message.includes("ECONNRESET")) {
                             return;
                         }

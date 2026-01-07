@@ -278,3 +278,36 @@
   animation: float3 14s ease-in-out infinite;
 }
 
+/* Pipeline status bar animations - striped animated bars */
+/* For 45deg angle: horizontal repeat = stripe_width * sqrt(2) ≈ 28px for 20px stripes */
+@keyframes stripedMove {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 28px 0;
+  }
+}
+
+.pipeline-bar-running {
+  background: repeating-linear-gradient(
+    -45deg,
+    #3b82f6 0px,
+    #3b82f6 10px,
+    #1e40af 10px,
+    #1e40af 20px
+  );
+  animation: stripedMove 0.6s linear infinite;
+}
+
+.pipeline-bar-pending {
+  background: repeating-linear-gradient(
+    -45deg,
+    #f59e0b 0px,
+    #f59e0b 10px,
+    #92400e 10px,
+    #92400e 20px
+  );
+  animation: stripedMove 1s linear infinite;
+}
+
