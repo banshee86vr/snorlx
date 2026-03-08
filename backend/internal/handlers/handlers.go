@@ -462,7 +462,7 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 
 	// Run sync in background; do not use r.Context() — it is cancelled when the handler returns (after 202),
 	// which would immediately cancel the sync and trigger sync:error. Use Background so sync runs to completion.
-	go h.runSync(context.Background(), accessToken)
+	go h.runSync(context.Background(), accessToken) // #nosec G118 -- intentional: sync must outlive the HTTP request
 }
 
 // runSync performs the actual sync operation in the background
