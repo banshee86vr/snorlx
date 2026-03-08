@@ -39,69 +39,72 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Handle WebSocket messages for sync events
+  // Handle WebSocket messages for sync events (defer state updates to satisfy react-hooks/set-state-in-effect)
   useEffect(() => {
     if (!lastMessage) return;
 
     const { type, data } = lastMessage as { type: string; data: Record<string, unknown> };
 
-    switch (type) {
-      case 'sync:start': {
-        setSync({
-          isSyncing: true,
-          syncedCount: 0,
-          totalToSync: (data.total as number) || 0,
-          progress: 0,
-          currentRepo: null,
-        });
-        break;
-      }
-      case 'sync:progress': {
-        const synced = (data.synced as number) || 0;
-        const total = (data.total as number) || 0;
-        const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
-        setSync(prev => ({
-          ...prev,
-          isSyncing: true,
-          syncedCount: synced,
-          totalToSync: total,
-          progress,
-          currentRepo: (data.current as string) || null,
-        }));
-        break;
-      }
-      case 'sync:complete': {
-        setSync(prev => ({
-          ...prev,
-          isSyncing: false,
-          progress: 100,
-        }));
-        // Refresh all data
-        queryClient.invalidateQueries({ queryKey: ['repositories'] });
-        queryClient.invalidateQueries({ queryKey: ['workflows'] });
-        queryClient.invalidateQueries({ queryKey: ['runs'] });
-        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-        queryClient.invalidateQueries({ queryKey: ['metrics'] });
-        // Reset after 2 seconds
-        setTimeout(() => {
+    const apply = () => {
+      switch (type) {
+        case 'sync:start': {
           setSync({
-            isSyncing: false,
+            isSyncing: true,
             syncedCount: 0,
-            totalToSync: 0,
+            totalToSync: (data.total as number) || 0,
             progress: 0,
             currentRepo: null,
           });
-        }, 2000);
-        break;
+          break;
+        }
+        case 'sync:progress': {
+          const synced = (data.synced as number) || 0;
+          const total = (data.total as number) || 0;
+          const progress = total > 0 ? Math.round((synced / total) * 100) : 0;
+          setSync(prev => ({
+            ...prev,
+            isSyncing: true,
+            syncedCount: synced,
+            totalToSync: total,
+            progress,
+            currentRepo: (data.current as string) || null,
+          }));
+          break;
+        }
+        case 'sync:complete': {
+          setSync(prev => ({
+            ...prev,
+            isSyncing: false,
+            progress: 100,
+          }));
+          // Refresh all data
+          queryClient.invalidateQueries({ queryKey: ['repositories'] });
+          queryClient.invalidateQueries({ queryKey: ['workflows'] });
+          queryClient.invalidateQueries({ queryKey: ['runs'] });
+          queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+          queryClient.invalidateQueries({ queryKey: ['metrics'] });
+          // Reset after 2 seconds
+          setTimeout(() => {
+            setSync({
+              isSyncing: false,
+              syncedCount: 0,
+              totalToSync: 0,
+              progress: 0,
+              currentRepo: null,
+            });
+          }, 2000);
+          break;
+        }
+        case 'sync:error': {
+          setSync(prev => ({
+            ...prev,
+            isSyncing: false,
+          }));
+          break;
+        }
       }
-      case 'sync:error': {
-        setSync(prev => ({
-          ...prev,
-          isSyncing: false,
-        }));
-        break;
-      }
-    }
+    };
+    queueMicrotask(apply);
   }, [lastMessage, queryClient]);
 
   return (

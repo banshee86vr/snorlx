@@ -24,7 +24,7 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm run build
 
 # Production stage
-FROM nginx:alpine
+FROM nginx:1.29.4-alpine
 
 # Copy built assets
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html

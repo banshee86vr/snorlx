@@ -24,7 +24,7 @@
     "docker:logs": "docker compose logs -f"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.2.1"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

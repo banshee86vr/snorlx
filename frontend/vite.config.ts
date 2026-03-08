@@ -9,6 +9,7 @@ export default defineConfig({
 			"@": "/src",
 		},
 	},
+	// @ts-expect-error - Vitest extends Vite config with test (see vitest/config)
 	test: {
 		globals: true,
 		environment: "jsdom",

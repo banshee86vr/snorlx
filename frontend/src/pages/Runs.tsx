@@ -24,16 +24,17 @@ export function Runs() {
   };
 
   // Filter runs by search query (client-side) - only by run name or repository name
+  const runsData = data?.data;
   const filteredRuns = useMemo(() => {
-    if (!data?.data || !search.trim()) return data?.data;
+    if (!runsData || !search.trim()) return runsData;
     const searchLower = search.toLowerCase();
-    return data.data.filter(
+    return runsData.filter(
       (run) =>
         run.name.toLowerCase().includes(searchLower) ||
         run.repository?.full_name?.toLowerCase().includes(searchLower) ||
         run.repository?.name?.toLowerCase().includes(searchLower)
     );
-  }, [data?.data, search]);
+  }, [runsData, search]);
 
   return (
     <div className="space-y-6">

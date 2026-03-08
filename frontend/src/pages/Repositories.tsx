@@ -18,9 +18,9 @@ export function Repositories() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Reset to first page when search changes
+  // Reset to first page when search changes (defer to satisfy react-hooks/set-state-in-effect)
   useEffect(() => {
-    setPage(1);
+    queueMicrotask(() => setPage(1));
   }, [searchQuery]);
 
   const { data, isLoading, isFetching } = useQuery({

@@ -30,7 +30,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
 
     const isDarkMode = effectiveTheme === 'dark';
-    setIsDark(isDarkMode);
+    queueMicrotask(() => setIsDark(isDarkMode));
 
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
