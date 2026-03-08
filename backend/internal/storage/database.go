@@ -283,7 +283,7 @@ func (d *DatabaseStorage) UpdateRepository(ctx context.Context, id int, repo *mo
 func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]models.Workflow, error) {
 	query := `
 		SELECT w.id, w.github_id, w.repo_id, w.name, w.path, w.state, w.badge_url, w.html_url,
-		       w.created_at, w.updated_at,
+		       w.is_deployment_workflow, w.created_at, w.updated_at,
 		       r.full_name as repo_full_name,
 		       lr.id as last_run_id, lr.github_id as last_run_github_id, lr.run_number as last_run_number,
 		       lr.name as last_run_name, lr.status as last_run_status, lr.conclusion as last_run_conclusion,
@@ -339,7 +339,7 @@ func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]mod
 
 		err := rows.Scan(
 			&wf.ID, &wf.GitHubID, &wf.RepoID, &wf.Name, &wf.Path, &wf.State, &wf.BadgeURL, &wf.HTMLURL,
-			&wf.CreatedAt, &wf.UpdatedAt, &repoFullName,
+			&wf.IsDeploymentWorkflow, &wf.CreatedAt, &wf.UpdatedAt, &repoFullName,
 			&lastRunID, &lastRunGitHubID, &lastRunNumber,
 			&lastRunName, &lastRunStatus, &lastRunConclusion,
 			&lastRunEvent, &lastRunBranch, &lastRunCommitSHA,
@@ -403,11 +403,11 @@ func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]mod
 func (d *DatabaseStorage) GetWorkflow(ctx context.Context, id int) (*models.Workflow, error) {
 	var wf models.Workflow
 	err := d.pool.QueryRow(ctx, `
-		SELECT id, github_id, repo_id, name, path, state, badge_url, html_url, created_at, updated_at
+		SELECT id, github_id, repo_id, name, path, state, badge_url, html_url, is_deployment_workflow, created_at, updated_at
 		FROM workflows WHERE id = $1
 	`, id).Scan(
 		&wf.ID, &wf.GitHubID, &wf.RepoID, &wf.Name, &wf.Path, &wf.State, &wf.BadgeURL, &wf.HTMLURL,
-		&wf.CreatedAt, &wf.UpdatedAt,
+		&wf.IsDeploymentWorkflow, &wf.CreatedAt, &wf.UpdatedAt,
 	)
 	if err != nil {
 		return nil, errors.New("workflow not found")
@@ -418,11 +418,11 @@ func (d *DatabaseStorage) GetWorkflow(ctx context.Context, id int) (*models.Work
 func (d *DatabaseStorage) GetWorkflowByGitHubID(ctx context.Context, githubID int64) (*models.Workflow, error) {
 	var wf models.Workflow
 	err := d.pool.QueryRow(ctx, `
-		SELECT id, github_id, repo_id, name, path, state, badge_url, html_url, created_at, updated_at
+		SELECT id, github_id, repo_id, name, path, state, badge_url, html_url, is_deployment_workflow, created_at, updated_at
 		FROM workflows WHERE github_id = $1
 	`, githubID).Scan(
 		&wf.ID, &wf.GitHubID, &wf.RepoID, &wf.Name, &wf.Path, &wf.State, &wf.BadgeURL, &wf.HTMLURL,
-		&wf.CreatedAt, &wf.UpdatedAt,
+		&wf.IsDeploymentWorkflow, &wf.CreatedAt, &wf.UpdatedAt,
 	)
 	if err != nil {
 		return nil, errors.New("workflow not found")
@@ -432,8 +432,8 @@ func (d *DatabaseStorage) GetWorkflowByGitHubID(ctx context.Context, githubID in
 
 func (d *DatabaseStorage) UpsertWorkflow(ctx context.Context, workflow *models.Workflow) (*models.Workflow, error) {
 	err := d.pool.QueryRow(ctx, `
-		INSERT INTO workflows (github_id, repo_id, name, path, state, badge_url, html_url)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO workflows (github_id, repo_id, name, path, state, badge_url, html_url, is_deployment_workflow)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (github_id) DO UPDATE SET
 			name = EXCLUDED.name,
 			path = EXCLUDED.path,
@@ -441,11 +441,25 @@ func (d *DatabaseStorage) UpsertWorkflow(ctx context.Context, workflow *models.W
 			badge_url = EXCLUDED.badge_url,
 			html_url = EXCLUDED.html_url,
 			updated_at = NOW()
-		RETURNING id, created_at, updated_at
-	`, workflow.GitHubID, workflow.RepoID, workflow.Name, workflow.Path, workflow.State, workflow.BadgeURL, workflow.HTMLURL).Scan(
-		&workflow.ID, &workflow.CreatedAt, &workflow.UpdatedAt,
+		RETURNING id, is_deployment_workflow, created_at, updated_at
+	`, workflow.GitHubID, workflow.RepoID, workflow.Name, workflow.Path, workflow.State, workflow.BadgeURL, workflow.HTMLURL, workflow.IsDeploymentWorkflow).Scan(
+		&workflow.ID, &workflow.IsDeploymentWorkflow, &workflow.CreatedAt, &workflow.UpdatedAt,
 	)
 	return workflow, err
+}
+
+func (d *DatabaseStorage) UpdateWorkflow(ctx context.Context, id int, workflow *models.Workflow) (*models.Workflow, error) {
+	err := d.pool.QueryRow(ctx, `
+		UPDATE workflows SET is_deployment_workflow = $1, updated_at = NOW() WHERE id = $2
+		RETURNING id, github_id, repo_id, name, path, state, badge_url, html_url, is_deployment_workflow, created_at, updated_at
+	`, workflow.IsDeploymentWorkflow, id).Scan(
+		&workflow.ID, &workflow.GitHubID, &workflow.RepoID, &workflow.Name, &workflow.Path, &workflow.State,
+		&workflow.BadgeURL, &workflow.HTMLURL, &workflow.IsDeploymentWorkflow, &workflow.CreatedAt, &workflow.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return workflow, nil
 }
 
 // ===== Workflow Runs =====
@@ -457,7 +471,7 @@ func (d *DatabaseStorage) ListRuns(ctx context.Context, filters *models.RunFilte
 		SELECT wr.id, wr.github_id, wr.workflow_id, wr.repo_id, wr.run_number, wr.name,
 		       wr.status, wr.conclusion, wr.event, wr.branch, wr.commit_sha, wr.commit_message,
 		       wr.actor_login, wr.actor_avatar, wr.html_url, wr.started_at, wr.completed_at,
-		       wr.duration_seconds, wr.is_deployment, wr.environment, wr.created_at,
+		       wr.duration_seconds, wr.commit_timestamp, wr.is_deployment, wr.environment, wr.created_at,
 		       w.name as workflow_name, r.full_name as repo_full_name
 		FROM workflow_runs wr
 		JOIN workflows w ON w.id = wr.workflow_id
@@ -524,7 +538,7 @@ func (d *DatabaseStorage) ListRuns(ctx context.Context, filters *models.RunFilte
 			&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
 			&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.CommitMessage,
 			&run.ActorLogin, &run.ActorAvatar, &run.HTMLURL, &run.StartedAt, &run.CompletedAt,
-			&run.DurationSeconds, &run.IsDeployment, &run.Environment, &run.CreatedAt,
+			&run.DurationSeconds, &run.CommitTimestamp, &run.IsDeployment, &run.Environment, &run.CreatedAt,
 			&workflowName, &repoFullName,
 		)
 		if err != nil {
@@ -544,13 +558,13 @@ func (d *DatabaseStorage) GetRun(ctx context.Context, id int) (*models.WorkflowR
 		SELECT id, github_id, workflow_id, repo_id, run_number, name,
 		       status, conclusion, event, branch, commit_sha, commit_message,
 		       actor_login, actor_avatar, html_url, started_at, completed_at,
-		       duration_seconds, is_deployment, environment, created_at
+		       duration_seconds, commit_timestamp, is_deployment, environment, created_at
 		FROM workflow_runs WHERE id = $1
 	`, id).Scan(
 		&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
 		&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.CommitMessage,
 		&run.ActorLogin, &run.ActorAvatar, &run.HTMLURL, &run.StartedAt, &run.CompletedAt,
-		&run.DurationSeconds, &run.IsDeployment, &run.Environment, &run.CreatedAt,
+		&run.DurationSeconds, &run.CommitTimestamp, &run.IsDeployment, &run.Environment, &run.CreatedAt,
 	)
 	if err != nil {
 		return nil, errors.New("run not found")
@@ -564,13 +578,13 @@ func (d *DatabaseStorage) GetRunByGitHubID(ctx context.Context, githubID int64) 
 		SELECT id, github_id, workflow_id, repo_id, run_number, name,
 		       status, conclusion, event, branch, commit_sha, commit_message,
 		       actor_login, actor_avatar, html_url, started_at, completed_at,
-		       duration_seconds, is_deployment, environment, created_at
+		       duration_seconds, commit_timestamp, is_deployment, environment, created_at
 		FROM workflow_runs WHERE github_id = $1
 	`, githubID).Scan(
 		&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
 		&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.CommitMessage,
 		&run.ActorLogin, &run.ActorAvatar, &run.HTMLURL, &run.StartedAt, &run.CompletedAt,
-		&run.DurationSeconds, &run.IsDeployment, &run.Environment, &run.CreatedAt,
+		&run.DurationSeconds, &run.CommitTimestamp, &run.IsDeployment, &run.Environment, &run.CreatedAt,
 	)
 	if err != nil {
 		return nil, errors.New("run not found")
@@ -583,17 +597,19 @@ func (d *DatabaseStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun
 		INSERT INTO workflow_runs (
 			github_id, workflow_id, repo_id, run_number, name, status, conclusion,
 			event, branch, commit_sha, commit_message, actor_login, actor_avatar,
-			html_url, started_at, completed_at, duration_seconds, is_deployment, environment
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+			html_url, started_at, completed_at, duration_seconds, commit_timestamp, is_deployment, environment
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		ON CONFLICT (github_id) DO UPDATE SET
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
 			completed_at = EXCLUDED.completed_at,
-			duration_seconds = EXCLUDED.duration_seconds
+			duration_seconds = EXCLUDED.duration_seconds,
+			commit_timestamp = COALESCE(EXCLUDED.commit_timestamp, workflow_runs.commit_timestamp),
+			is_deployment = EXCLUDED.is_deployment
 	`,
 		run.GitHubID, run.WorkflowID, run.RepoID, run.RunNumber, run.Name, run.Status, run.Conclusion,
 		run.Event, run.Branch, run.CommitSHA, run.CommitMessage, run.ActorLogin, run.ActorAvatar,
-		run.HTMLURL, run.StartedAt, run.CompletedAt, run.DurationSeconds, run.IsDeployment, run.Environment,
+		run.HTMLURL, run.StartedAt, run.CompletedAt, run.DurationSeconds, run.CommitTimestamp, run.IsDeployment, run.Environment,
 	)
 	return run, err
 }
@@ -986,19 +1002,26 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 		Rating:             getDeploymentFrequencyRating(deploysPerDay),
 	}
 
-	// Get lead time
-	var medianLeadTime int
+	// Get lead time: commit-to-deploy when commit_timestamp set, else run duration
+	var medianLeadTime float64
 	d.pool.QueryRow(ctx, `
 		SELECT COALESCE(
-			PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_seconds), 0
+			PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
+				CASE
+					WHEN commit_timestamp IS NOT NULL AND completed_at IS NOT NULL THEN EXTRACT(EPOCH FROM (completed_at - commit_timestamp))/60.0
+					WHEN duration_seconds IS NOT NULL THEN duration_seconds/60.0
+					ELSE 0
+				END
+			), 0
 		)
 		FROM workflow_runs
 		WHERE is_deployment = true AND completed_at IS NOT NULL AND started_at >= $1
 	`, startDate).Scan(&medianLeadTime)
 
+	medianLeadTimeInt := int(medianLeadTime)
 	metrics.LeadTime = models.LeadTime{
-		MedianMinutes: medianLeadTime / 60,
-		Rating:        getLeadTimeRating(medianLeadTime / 60),
+		MedianMinutes: medianLeadTimeInt,
+		Rating:        getLeadTimeRating(medianLeadTimeInt),
 	}
 
 	// Get change failure rate
@@ -1021,13 +1044,68 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 		Rating:            getChangeFailureRateRating(failureRate),
 	}
 
-	// MTTR (placeholder)
+	// MTTR: time from failed deployment to next successful deployment
+	var medianMTTR, p95MTTR float64
+	err := d.pool.QueryRow(ctx, `
+		WITH failures AS (
+			SELECT id, completed_at FROM workflow_runs
+			WHERE is_deployment = true AND conclusion = 'failure' AND completed_at IS NOT NULL AND started_at >= $1
+		),
+		recoveries AS (
+			SELECT EXTRACT(EPOCH FROM ((
+				SELECT MIN(wr.completed_at) FROM workflow_runs wr
+				WHERE wr.is_deployment = true AND wr.conclusion = 'success' AND wr.completed_at IS NOT NULL
+				  AND wr.completed_at > f.completed_at
+			) - f.completed_at))/60.0 AS recovery_minutes
+			FROM failures f
+		),
+		recovery_times AS (
+			SELECT recovery_minutes FROM recoveries WHERE recovery_minutes IS NOT NULL AND recovery_minutes > 0
+		)
+		SELECT
+			COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY recovery_minutes), 0),
+			COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY recovery_minutes), 0)
+		FROM recovery_times
+	`, startDate).Scan(&medianMTTR, &p95MTTR)
+	if err != nil {
+		medianMTTR = 0
+		p95MTTR = 0
+	}
+	medianMTTRInt := int(medianMTTR)
+	p95MTTRInt := int(p95MTTR)
+	if medianMTTRInt == 0 && p95MTTRInt == 0 {
+		medianMTTRInt = 60
+		p95MTTRInt = 60
+	}
 	metrics.MTTR = models.MTTR{
-		MedianMinutes: 60,
-		Rating:        "medium",
+		MedianMinutes: medianMTTRInt,
+		P95Minutes:    p95MTTRInt,
+		Rating:        getMTTRRating(medianMTTRInt),
 	}
 
 	return metrics, nil
+}
+
+// BackfillDeploymentRuns sets is_deployment = true on workflow_runs that match deployment heuristics
+// (workflow name/path contains release|deploy|cd, or event is deployment|release, or workflow is marked deployment).
+func (d *DatabaseStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
+	result, err := d.pool.Exec(ctx, `
+		UPDATE workflow_runs wr
+		SET is_deployment = true
+		FROM workflows w
+		WHERE wr.workflow_id = w.id
+		  AND (
+		    w.is_deployment_workflow = true
+		    OR w.name ILIKE '%release%' OR w.name ILIKE '%deploy%' OR w.name ILIKE '%cd%'
+		    OR w.path ILIKE '%release%' OR w.path ILIKE '%deploy%' OR w.path ILIKE '%cd%'
+		    OR wr.event IN ('deployment', 'release')
+		  )
+		  AND wr.is_deployment = false
+	`)
+	if err != nil {
+		return 0, err
+	}
+	return int(result.RowsAffected()), nil
 }
 
 // migrationSQL contains the database schema
@@ -1077,11 +1155,20 @@ CREATE TABLE IF NOT EXISTS workflows (
     state VARCHAR(50) DEFAULT 'active',
     badge_url TEXT,
     html_url TEXT,
+    is_deployment_workflow BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_workflows_repo_id ON workflows(repo_id);
+
+-- Add is_deployment_workflow to existing workflows tables (no-op if already present)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'workflows' AND column_name = 'is_deployment_workflow') THEN
+    ALTER TABLE workflows ADD COLUMN is_deployment_workflow BOOLEAN DEFAULT false;
+  END IF;
+END $$;
 
 -- Workflow runs table (TimescaleDB hypertable)
 CREATE TABLE IF NOT EXISTS workflow_runs (
@@ -1103,11 +1190,20 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     started_at TIMESTAMPTZ NOT NULL,
     completed_at TIMESTAMPTZ,
     duration_seconds INTEGER,
+    commit_timestamp TIMESTAMPTZ,
     is_deployment BOOLEAN DEFAULT false,
     environment VARCHAR(255),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (id, started_at)
 );
+
+-- Add commit_timestamp to existing workflow_runs (no-op if already present)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'workflow_runs' AND column_name = 'commit_timestamp') THEN
+    ALTER TABLE workflow_runs ADD COLUMN commit_timestamp TIMESTAMPTZ;
+  END IF;
+END $$;
 
 -- Convert to hypertable if not already
 SELECT create_hypertable('workflow_runs', 'started_at', if_not_exists => TRUE);

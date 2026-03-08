@@ -39,16 +39,17 @@ type Repository struct {
 
 // Workflow represents a GitHub Actions workflow
 type Workflow struct {
-	ID        int       `json:"id"`
-	GitHubID  int64     `json:"github_id"`
-	RepoID    int       `json:"repo_id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	State     string    `json:"state"`
-	BadgeURL  *string   `json:"badge_url,omitempty"`
-	HTMLURL   *string   `json:"html_url,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                   int       `json:"id"`
+	GitHubID             int64     `json:"github_id"`
+	RepoID               int       `json:"repo_id"`
+	Name                 string    `json:"name"`
+	Path                 string    `json:"path"`
+	State                string    `json:"state"`
+	BadgeURL             *string   `json:"badge_url,omitempty"`
+	HTMLURL              *string   `json:"html_url,omitempty"`
+	IsDeploymentWorkflow bool      `json:"is_deployment_workflow"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 
 	// Computed fields
 	Repository     *Repository `json:"repository,omitempty"`
@@ -78,6 +79,7 @@ type WorkflowRun struct {
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	DurationSeconds *int       `json:"duration_seconds,omitempty"`
+	CommitTimestamp *time.Time `json:"commit_timestamp,omitempty"`
 	IsDeployment    bool       `json:"is_deployment"`
 	Environment     *string    `json:"environment,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`

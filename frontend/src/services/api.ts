@@ -10,6 +10,7 @@ import type {
 	ListResponse,
 	RunFilters,
 	JobDependency,
+	DevOpsMetrics,
 } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -70,6 +71,11 @@ export const workflowsApi = {
 	list: (repoId?: number) =>
 		fetchApi<Workflow[]>(`/api/workflows${repoId ? `?repo_id=${repoId}` : ""}`),
 	get: (id: number) => fetchApi<Workflow>(`/api/workflows/${id}`),
+	update: (id: number, body: { is_deployment_workflow?: boolean }) =>
+		fetchApi<Workflow>(`/api/workflows/${id}`, {
+			method: "PATCH",
+			body: JSON.stringify(body),
+		}),
 	getRuns: (id: number, page = 1) =>
 		fetchApi<ListResponse<WorkflowRun>>(
 			`/api/workflows/${id}/runs?page=${page}`,
@@ -129,6 +135,12 @@ export const dashboardApi = {
 	getSummary: () => fetchApi<DashboardSummary>("/api/dashboard/summary"),
 	getTrends: (days = 30) =>
 		fetchApi<{ trends: Trend[] }>(`/api/dashboard/trends?days=${days}`),
+};
+
+// DevOps / DORA metrics API
+export const metricsApi = {
+	getDevOps: (period: "7d" | "30d" | "90d" = "30d") =>
+		fetchApi<DevOpsMetrics>(`/api/metrics/devops?period=${period}`),
 };
 
 // Convenience export for common operations

@@ -32,6 +32,7 @@ type Storage interface {
 	GetWorkflow(ctx context.Context, id int) (*models.Workflow, error)
 	GetWorkflowByGitHubID(ctx context.Context, githubID int64) (*models.Workflow, error)
 	UpsertWorkflow(ctx context.Context, workflow *models.Workflow) (*models.Workflow, error)
+	UpdateWorkflow(ctx context.Context, id int, workflow *models.Workflow) (*models.Workflow, error)
 
 	// Workflow Runs
 	ListRuns(ctx context.Context, filters *models.RunFilters, page, pageSize int) ([]models.WorkflowRun, int, error)
@@ -61,6 +62,9 @@ type Storage interface {
 	GetDashboardSummary(ctx context.Context) (*models.DashboardSummary, error)
 	GetTrends(ctx context.Context, days int) ([]models.Trend, error)
 	GetDevOpsMetrics(ctx context.Context, startDate, endDate time.Time) (*models.DevOpsMetrics, error)
+
+	// Backfill
+	BackfillDeploymentRuns(ctx context.Context) (int, error)
 }
 
 // StorageMode defines the storage backend type

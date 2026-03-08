@@ -288,7 +288,9 @@ func (h *Handler) processWebhookEvent(eventType string, event interface{}) {
 			Int64("deployment_id", e.GetDeployment().GetID()).
 			Msg("Processing deployment event")
 
-		h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+		if dep := h.convertAndPersistDeployment(ctx, e.GetRepo(), e.GetDeployment(), nil); dep != nil {
+			h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+		}
 
 	case *gh.DeploymentStatusEvent:
 		log.Info().
@@ -296,7 +298,10 @@ func (h *Handler) processWebhookEvent(eventType string, event interface{}) {
 			Str("status", e.GetDeploymentStatus().GetState()).
 			Msg("Processing deployment_status event")
 
-		h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+		dep := h.convertAndPersistDeploymentStatus(ctx, e.GetRepo(), e.GetDeployment(), e.GetDeploymentStatus())
+		if dep != nil {
+			h.wsHub.BroadcastDeploymentUpdate(e.GetDeployment())
+		}
 	}
 }
 
@@ -521,16 +526,20 @@ func (h *Handler) runSync(accessToken string) {
 			continue
 		}
 
-		// Build a map of GitHub workflow ID to internal workflow ID
+		// Build maps of GitHub workflow ID to internal ID, path, name, and deployment flag (for deployment classification)
 		workflowIDMap := make(map[int64]int)
+		workflowPathMap := make(map[int64]string)
+		workflowNameMap := make(map[int64]string)
+		workflowDeploymentMap := make(map[int64]bool)
 
 		for _, ghWorkflow := range ghWorkflows {
 			workflow := &models.Workflow{
-				GitHubID: ghWorkflow.GetID(),
-				RepoID:   savedRepo.ID,
-				Name:     ghWorkflow.GetName(),
-				Path:     ghWorkflow.GetPath(),
-				State:    ghWorkflow.GetState(),
+				GitHubID:             ghWorkflow.GetID(),
+				RepoID:               savedRepo.ID,
+				Name:                 ghWorkflow.GetName(),
+				Path:                 ghWorkflow.GetPath(),
+				State:                ghWorkflow.GetState(),
+				IsDeploymentWorkflow: false, // preserve DB value via UpsertWorkflow RETURNING
 			}
 			if ghWorkflow.BadgeURL != nil {
 				workflow.BadgeURL = ghWorkflow.BadgeURL
@@ -546,6 +555,9 @@ func (h *Handler) runSync(accessToken string) {
 			}
 			syncedWorkflows++
 			workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
+			workflowPathMap[ghWorkflow.GetID()] = ghWorkflow.GetPath()
+			workflowNameMap[ghWorkflow.GetID()] = ghWorkflow.GetName()
+			workflowDeploymentMap[ghWorkflow.GetID()] = savedWorkflow.IsDeploymentWorkflow
 		}
 
 		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
@@ -591,6 +603,8 @@ func (h *Handler) runSync(accessToken string) {
 				run.DurationSeconds = &duration
 			}
 
+			run.IsDeployment = workflowDeploymentMap[ghRun.GetWorkflowID()] || isDeploymentRun(workflowNameMap[ghRun.GetWorkflowID()], workflowPathMap[ghRun.GetWorkflowID()], ghRun.GetEvent())
+
 			if _, err := h.storage.UpsertRun(ctx, run); err != nil {
 				log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
 				continue
@@ -607,6 +621,16 @@ func (h *Handler) runSync(accessToken string) {
 
 	// Broadcast sync complete
 	h.wsHub.BroadcastSyncComplete(syncedRepos, syncedWorkflows, syncedRuns)
+}
+
+// BackfillDeploymentRuns retroactively sets is_deployment on existing workflow runs that match deployment heuristics.
+func (h *Handler) BackfillDeploymentRuns(w http.ResponseWriter, r *http.Request) {
+	updated, err := h.storage.BackfillDeploymentRuns(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to backfill deployment runs", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]int{"updated": updated})
 }
 
 // ===== Workflow Handlers =====
@@ -639,6 +663,37 @@ func (h *Handler) GetWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(wf)
+}
+
+// UpdateWorkflow updates workflow settings (e.g. is_deployment_workflow)
+func (h *Handler) UpdateWorkflow(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	existing, err := h.storage.GetWorkflow(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Workflow not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		IsDeploymentWorkflow *bool `json:"is_deployment_workflow"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if body.IsDeploymentWorkflow != nil {
+		existing.IsDeploymentWorkflow = *body.IsDeploymentWorkflow
+	}
+
+	updated, err := h.storage.UpdateWorkflow(r.Context(), id, existing)
+	if err != nil {
+		http.Error(w, "Failed to update workflow", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(updated)
 }
 
 // GetWorkflowRuns gets runs for a workflow
@@ -1289,6 +1344,23 @@ func (h *Handler) GetTrends(w http.ResponseWriter, r *http.Request) {
 
 // ===== Helper Functions =====
 
+// isDeploymentRun returns true if the workflow run should be counted as a deployment for DORA metrics.
+// It uses heuristics: workflow name or path contains release/deploy/cd, or event is deployment/release.
+func isDeploymentRun(workflowName, workflowPath, event string) bool {
+	lowerEvent := strings.ToLower(event)
+	if lowerEvent == "deployment" || lowerEvent == "release" {
+		return true
+	}
+	lowerName := strings.ToLower(workflowName)
+	lowerPath := strings.ToLower(workflowPath)
+	for _, keyword := range []string{"release", "deploy", "cd"} {
+		if strings.Contains(lowerName, keyword) || strings.Contains(lowerPath, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) getUserFromContext(ctx context.Context) *models.User {
 	user, _ := ctx.Value(userContextKey).(*models.User)
 	return user
@@ -1322,7 +1394,91 @@ func (h *Handler) convertWorkflowRun(run *gh.WorkflowRun, repo *gh.Repository) *
 		result.DurationSeconds = &duration
 	}
 
+	// Commit timestamp for lead time (commit-to-deploy)
+	if run.HeadCommit != nil && !run.HeadCommit.GetTimestamp().IsZero() {
+		t := run.HeadCommit.GetTimestamp().Time
+		result.CommitTimestamp = &t
+	}
+
+	result.IsDeployment = isDeploymentRun(run.GetName(), "", run.GetEvent())
+
 	return result
+}
+
+// convertAndPersistDeployment creates a deployment record from a GitHub deployment event and persists it.
+// Returns the persisted deployment or nil on error (e.g. repo not found).
+func (h *Handler) convertAndPersistDeployment(ctx context.Context, repo *gh.Repository, ghDep *gh.Deployment, _ *gh.DeploymentStatus) *models.Deployment {
+	if repo == nil || ghDep == nil {
+		return nil
+	}
+	ourRepo, err := h.storage.GetRepositoryByGitHubID(ctx, repo.GetID())
+	if err != nil {
+		log.Warn().Err(err).Int64("repo_github_id", repo.GetID()).Msg("Repo not found for deployment event")
+		return nil
+	}
+	creatorLogin := ""
+	if ghDep.GetCreator() != nil {
+		creatorLogin = ghDep.GetCreator().GetLogin()
+	}
+	dep := &models.Deployment{
+		GitHubID:     ghDep.GetID(),
+		RepoID:       ourRepo.ID,
+		RunID:        nil,
+		Environment:  ghDep.GetEnvironment(),
+		Status:       "created",
+		Description:  ghDep.Description,
+		CreatorLogin: creatorLogin,
+		SHA:          ghDep.GetSHA(),
+		Ref:          ghDep.GetRef(),
+		CreatedAt:    ghDep.GetCreatedAt().Time,
+		UpdatedAt:    ghDep.GetUpdatedAt().Time,
+	}
+	saved, err := h.storage.UpsertDeployment(ctx, dep)
+	if err != nil {
+		log.Error().Err(err).Int64("deployment_id", ghDep.GetID()).Msg("Failed to persist deployment")
+		return nil
+	}
+	return saved
+}
+
+// convertAndPersistDeploymentStatus updates a deployment record from a deployment_status webhook and persists it.
+func (h *Handler) convertAndPersistDeploymentStatus(ctx context.Context, repo *gh.Repository, ghDep *gh.Deployment, ghStatus *gh.DeploymentStatus) *models.Deployment {
+	if repo == nil || ghDep == nil || ghStatus == nil {
+		return nil
+	}
+	ourRepo, err := h.storage.GetRepositoryByGitHubID(ctx, repo.GetID())
+	if err != nil {
+		log.Warn().Err(err).Int64("repo_github_id", repo.GetID()).Msg("Repo not found for deployment_status event")
+		return nil
+	}
+	creatorLogin := ""
+	if ghDep.GetCreator() != nil {
+		creatorLogin = ghDep.GetCreator().GetLogin()
+	}
+	status := ghStatus.GetState()
+	dep := &models.Deployment{
+		GitHubID:     ghDep.GetID(),
+		RepoID:       ourRepo.ID,
+		RunID:        nil,
+		Environment:  ghDep.GetEnvironment(),
+		Status:       status,
+		Description:  ghDep.Description,
+		CreatorLogin: creatorLogin,
+		SHA:          ghDep.GetSHA(),
+		Ref:          ghDep.GetRef(),
+		CreatedAt:    ghDep.GetCreatedAt().Time,
+		UpdatedAt:    ghDep.GetUpdatedAt().Time,
+	}
+	if status == "success" && !ghStatus.GetUpdatedAt().IsZero() {
+		t := ghStatus.GetUpdatedAt().Time
+		dep.DeployedAt = &t
+	}
+	saved, err := h.storage.UpsertDeployment(ctx, dep)
+	if err != nil {
+		log.Error().Err(err).Int64("deployment_id", ghDep.GetID()).Msg("Failed to persist deployment status")
+		return nil
+	}
+	return saved
 }
 
 func (h *Handler) convertWorkflowJob(job *gh.WorkflowJob, runID int) *models.WorkflowJob {

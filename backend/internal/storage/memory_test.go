@@ -663,6 +663,81 @@ func TestGetDevOpsMetrics(t *testing.T) {
 	}
 }
 
+func TestGetDevOpsMetrics_MTTR(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+
+	now := time.Now()
+	failure := "failure"
+	success := "success"
+	// Failed at T-2h, recovered (next success) at T-1h -> recovery time 1h = 60 min
+	failedAt := now.Add(-2 * time.Hour)
+	successAt := now.Add(-1 * time.Hour)
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID:     1,
+		StartedAt:   failedAt.Add(-30 * time.Minute),
+		IsDeployment: true,
+		Conclusion:  &failure,
+		CompletedAt: &failedAt,
+	})
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID:     2,
+		StartedAt:   successAt.Add(-10 * time.Minute),
+		IsDeployment: true,
+		Conclusion:  &success,
+		CompletedAt: &successAt,
+	})
+
+	metrics, err := s.GetDevOpsMetrics(ctx, now.Add(-24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("GetDevOpsMetrics failed: %v", err)
+	}
+	// MTTR should be ~60 min (recovery from failure to next success)
+	if metrics.MTTR.MedianMinutes < 50 || metrics.MTTR.MedianMinutes > 70 {
+		t.Errorf("expected MTTR median ~60 min, got %d", metrics.MTTR.MedianMinutes)
+	}
+}
+
+func TestBackfillDeploymentRuns(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+
+	// Create repo and workflow with "release" in name so heuristic matches
+	repo := &models.Repository{GitHubID: 1, Name: "test", FullName: "owner/test"}
+	_, _ = s.UpsertRepository(ctx, repo)
+	wf := &models.Workflow{GitHubID: 1, RepoID: repo.ID, Name: "Release workflow", Path: ".github/workflows/release.yml"}
+	_, _ = s.UpsertWorkflow(ctx, wf)
+
+	// Run without IsDeployment set
+	run := &models.WorkflowRun{
+		GitHubID:    100,
+		WorkflowID:  wf.ID,
+		RepoID:     repo.ID,
+		StartedAt:  time.Now(),
+		Event:      "push",
+		IsDeployment: false,
+	}
+	_, err := s.UpsertRun(ctx, run)
+	if err != nil {
+		t.Fatalf("UpsertRun failed: %v", err)
+	}
+
+	updated, err := s.BackfillDeploymentRuns(ctx)
+	if err != nil {
+		t.Fatalf("BackfillDeploymentRuns failed: %v", err)
+	}
+	if updated != 1 {
+		t.Errorf("expected 1 run updated, got %d", updated)
+	}
+
+	// Verify the run is now marked as deployment
+	stored, _ := s.GetRunByGitHubID(ctx, 100)
+	if stored == nil || !stored.IsDeployment {
+		t.Error("expected run to have IsDeployment true after backfill")
+	}
+}
+
 // ===== Storage Lifecycle =====
 
 func TestClose(t *testing.T) {

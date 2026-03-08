@@ -361,7 +361,7 @@ func (m *MemoryStorage) UpsertWorkflow(ctx context.Context, workflow *models.Wor
 	defer m.mu.Unlock()
 
 	if existingID, ok := m.workflowGitHubIndex[workflow.GitHubID]; ok {
-		// Update existing
+		// Update existing (preserve IsDeploymentWorkflow - user setting)
 		existing := m.workflows[existingID]
 		existing.Name = workflow.Name
 		existing.Path = workflow.Path
@@ -369,7 +369,11 @@ func (m *MemoryStorage) UpsertWorkflow(ctx context.Context, workflow *models.Wor
 		existing.BadgeURL = workflow.BadgeURL
 		existing.HTMLURL = workflow.HTMLURL
 		existing.UpdatedAt = time.Now()
-		return existing, nil
+		workflow.ID = existing.ID
+		workflow.IsDeploymentWorkflow = existing.IsDeploymentWorkflow
+		workflow.CreatedAt = existing.CreatedAt
+		workflow.UpdatedAt = existing.UpdatedAt
+		return workflow, nil
 	}
 
 	// Create new
@@ -380,6 +384,30 @@ func (m *MemoryStorage) UpsertWorkflow(ctx context.Context, workflow *models.Wor
 	m.workflows[workflow.ID] = workflow
 	m.workflowGitHubIndex[workflow.GitHubID] = workflow.ID
 
+	return workflow, nil
+}
+
+func (m *MemoryStorage) UpdateWorkflow(ctx context.Context, id int, workflow *models.Workflow) (*models.Workflow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, ok := m.workflows[id]
+	if !ok {
+		return nil, errors.New("workflow not found")
+	}
+	existing.IsDeploymentWorkflow = workflow.IsDeploymentWorkflow
+	existing.UpdatedAt = time.Now()
+	workflow.ID = existing.ID
+	workflow.GitHubID = existing.GitHubID
+	workflow.RepoID = existing.RepoID
+	workflow.Name = existing.Name
+	workflow.Path = existing.Path
+	workflow.State = existing.State
+	workflow.BadgeURL = existing.BadgeURL
+	workflow.HTMLURL = existing.HTMLURL
+	workflow.IsDeploymentWorkflow = existing.IsDeploymentWorkflow
+	workflow.CreatedAt = existing.CreatedAt
+	workflow.UpdatedAt = existing.UpdatedAt
 	return workflow, nil
 }
 
@@ -480,6 +508,10 @@ func (m *MemoryStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun) 
 		existing.Conclusion = run.Conclusion
 		existing.CompletedAt = run.CompletedAt
 		existing.DurationSeconds = run.DurationSeconds
+		existing.IsDeployment = run.IsDeployment
+		if run.CommitTimestamp != nil {
+			existing.CommitTimestamp = run.CommitTimestamp
+		}
 		return existing, nil
 	}
 
@@ -899,8 +931,7 @@ func (m *MemoryStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate
 
 	// Count deployments and calculate metrics
 	var totalDeploys, failedDeploys int
-	var totalDuration int
-	var durationCount int
+	var leadTimeMinutes []int
 
 	for _, run := range m.runs {
 		if run.StartedAt.Before(startDate) || run.StartedAt.After(endDate) {
@@ -912,9 +943,17 @@ func (m *MemoryStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate
 			if run.Conclusion != nil && *run.Conclusion == "failure" {
 				failedDeploys++
 			}
-			if run.DurationSeconds != nil {
-				totalDuration += *run.DurationSeconds
-				durationCount++
+			// Lead time: commit-to-deploy when commit_timestamp set, else run duration
+			if run.CompletedAt != nil {
+				var mins int
+				if run.CommitTimestamp != nil {
+					mins = int(run.CompletedAt.Sub(*run.CommitTimestamp).Minutes())
+				} else if run.DurationSeconds != nil {
+					mins = *run.DurationSeconds / 60
+				}
+				if mins >= 0 {
+					leadTimeMinutes = append(leadTimeMinutes, mins)
+				}
 			}
 		}
 	}
@@ -928,10 +967,11 @@ func (m *MemoryStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate
 		Rating:             getDeploymentFrequencyRating(deploysPerDay),
 	}
 
-	// Lead Time
+	// Lead Time (median of commit-to-deploy or duration)
 	medianMinutes := 0
-	if durationCount > 0 {
-		medianMinutes = (totalDuration / durationCount) / 60
+	if len(leadTimeMinutes) > 0 {
+		sort.Ints(leadTimeMinutes)
+		medianMinutes = leadTimeMinutes[len(leadTimeMinutes)/2]
 	}
 	metrics.LeadTime = models.LeadTime{
 		MedianMinutes: medianMinutes,
@@ -950,13 +990,86 @@ func (m *MemoryStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate
 		Rating:            getChangeFailureRateRating(failureRate),
 	}
 
-	// MTTR (placeholder)
+	// MTTR: time from failed deployment to next successful deployment
+	var recoveryMinutes []int
+	for _, run := range m.runs {
+		if !run.IsDeployment || run.Conclusion == nil || *run.Conclusion != "failure" || run.CompletedAt == nil {
+			continue
+		}
+		if run.StartedAt.Before(startDate) {
+			continue
+		}
+		failedAt := *run.CompletedAt
+		var minRecovery *time.Duration
+		for _, r2 := range m.runs {
+			if !r2.IsDeployment || r2.Conclusion == nil || *r2.Conclusion != "success" || r2.CompletedAt == nil {
+				continue
+			}
+			if r2.CompletedAt.After(failedAt) {
+				d := r2.CompletedAt.Sub(failedAt)
+				if minRecovery == nil || d < *minRecovery {
+					minRecovery = &d
+				}
+			}
+		}
+		if minRecovery != nil && *minRecovery > 0 {
+			recoveryMinutes = append(recoveryMinutes, int(minRecovery.Minutes()))
+		}
+	}
+	medianMTTR := 60
+	p95MTTR := 60
+	if len(recoveryMinutes) > 0 {
+		sort.Ints(recoveryMinutes)
+		medianMTTR = recoveryMinutes[len(recoveryMinutes)/2]
+		p95Idx := int(float64(len(recoveryMinutes)) * 0.95)
+		if p95Idx >= len(recoveryMinutes) {
+			p95Idx = len(recoveryMinutes) - 1
+		}
+		p95MTTR = recoveryMinutes[p95Idx]
+	}
 	metrics.MTTR = models.MTTR{
-		MedianMinutes: 60,
-		Rating:        "medium",
+		MedianMinutes: medianMTTR,
+		P95Minutes:    p95MTTR,
+		Rating:        getMTTRRating(medianMTTR),
 	}
 
 	return metrics, nil
+}
+
+// backfillIsDeploymentRun returns true if the workflow run should be counted as a deployment (same heuristic as handlers).
+func backfillIsDeploymentRun(workflowName, workflowPath, event string) bool {
+	lowerEvent := strings.ToLower(event)
+	if lowerEvent == "deployment" || lowerEvent == "release" {
+		return true
+	}
+	lowerName := strings.ToLower(workflowName)
+	lowerPath := strings.ToLower(workflowPath)
+	for _, keyword := range []string{"release", "deploy", "cd"} {
+		if strings.Contains(lowerName, keyword) || strings.Contains(lowerPath, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// BackfillDeploymentRuns sets IsDeployment on runs that match deployment heuristics.
+func (m *MemoryStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	updated := 0
+	for _, run := range m.runs {
+		wf, ok := m.workflows[run.WorkflowID]
+		if !ok {
+			continue
+		}
+		shouldBeDeploy := wf.IsDeploymentWorkflow || backfillIsDeploymentRun(wf.Name, wf.Path, run.Event)
+		if shouldBeDeploy && !run.IsDeployment {
+			run.IsDeployment = true
+			updated++
+		}
+	}
+	return updated, nil
 }
 
 // Helper functions for ratings
@@ -993,6 +1106,19 @@ func getChangeFailureRateRating(rate float64) string {
 	case rate <= 30:
 		return "high"
 	case rate <= 45:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func getMTTRRating(medianMinutes int) string {
+	switch {
+	case medianMinutes <= 60:
+		return "elite"
+	case medianMinutes <= 1440:
+		return "high"
+	case medianMinutes <= 10080:
 		return "medium"
 	default:
 		return "low"

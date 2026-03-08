@@ -38,6 +38,7 @@ export interface Workflow {
 	state: string;
 	badge_url: string | null;
 	html_url: string | null;
+	is_deployment_workflow?: boolean;
 	repository?: Repository;
 	last_run?: WorkflowRun;
 	total_runs?: number;
@@ -160,4 +161,41 @@ export interface JobDependency {
 	needs: string[];
 	is_matrix?: boolean;
 	prefix?: string; // Prefix for job names (e.g., calling job name for reusable workflows)
+}
+
+// DORA / DevOps metrics
+export interface DeploymentFrequency {
+	total_deployments: number;
+	deployments_per_day: number;
+	deployments_per_week: number;
+	rating: string;
+}
+
+export interface LeadTime {
+	median_minutes: number;
+	p95_minutes: number;
+	rating: string;
+}
+
+export interface ChangeFailureRate {
+	total_deployments: number;
+	failed_deployments: number;
+	rate: number;
+	rating: string;
+}
+
+export interface MTTR {
+	median_minutes: number;
+	p95_minutes: number;
+	rating: string;
+}
+
+export interface DevOpsMetrics {
+	deployment_frequency: DeploymentFrequency;
+	lead_time: LeadTime;
+	change_failure_rate: ChangeFailureRate;
+	mttr: MTTR;
+	period: string;
+	start_date: string;
+	end_date: string;
 }

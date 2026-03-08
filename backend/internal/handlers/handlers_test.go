@@ -68,6 +68,9 @@ func (m *mockStorage) GetWorkflowByGitHubID(ctx context.Context, githubID int64)
 func (m *mockStorage) UpsertWorkflow(ctx context.Context, workflow *models.Workflow) (*models.Workflow, error) {
 	return workflow, nil
 }
+func (m *mockStorage) UpdateWorkflow(ctx context.Context, id int, workflow *models.Workflow) (*models.Workflow, error) {
+	return workflow, nil
+}
 func (m *mockStorage) ListRuns(ctx context.Context, filters *models.RunFilters, page, pageSize int) ([]models.WorkflowRun, int, error) {
 	return nil, 0, nil
 }
@@ -134,6 +137,10 @@ func (m *mockStorage) GetTrends(ctx context.Context, days int) ([]models.Trend, 
 }
 func (m *mockStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate time.Time) (*models.DevOpsMetrics, error) {
 	return &models.DevOpsMetrics{}, nil
+}
+
+func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
+	return 0, nil
 }
 
 // ===== Test helpers =====

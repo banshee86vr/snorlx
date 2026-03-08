@@ -142,10 +142,12 @@ func main() {
 			r.Get("/repositories", h.ListRepositories)
 			r.Get("/repositories/{id}", h.GetRepository)
 			r.Post("/repositories/sync", h.SyncRepositories)
+			r.Post("/repositories/backfill-deployment-runs", h.BackfillDeploymentRuns)
 
 			// Workflows
 			r.Get("/workflows", h.ListWorkflows)
 			r.Get("/workflows/{id}", h.GetWorkflow)
+			r.Patch("/workflows/{id}", h.UpdateWorkflow)
 			r.Get("/workflows/{id}/runs", h.GetWorkflowRuns)
 
 			// Runs

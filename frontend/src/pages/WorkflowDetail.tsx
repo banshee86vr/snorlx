@@ -1,16 +1,27 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, ExternalLink, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, CheckCircle, XCircle, Clock, Loader2, Rocket } from 'lucide-react';
 import { workflowsApi } from '../services/api';
 import { formatRelativeTime, formatDuration } from '../lib/utils';
 
 export function WorkflowDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
+  const workflowId = id ? Number(id) : 0;
 
   const { data: workflow, isLoading } = useQuery({
     queryKey: ['workflows', id],
-    queryFn: () => workflowsApi.get(Number(id)),
+    queryFn: () => workflowsApi.get(workflowId),
     enabled: !!id,
+  });
+
+  const updateWorkflowMutation = useMutation({
+    mutationFn: (is_deployment_workflow: boolean) =>
+      workflowsApi.update(workflowId, { is_deployment_workflow }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflows', id] });
+      queryClient.invalidateQueries({ queryKey: ['metrics'] });
+    },
   });
 
   const { data: runsData } = useQuery({
@@ -81,6 +92,43 @@ export function WorkflowDetail() {
           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             {formatDuration(workflow.avg_duration_seconds)}
           </p>
+        </div>
+      </div>
+
+      {/* DORA / Deployment setting */}
+      <div className="card p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+              <Rocket className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <p className="font-medium text-gray-900 dark:text-gray-100">Count as deployment</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                When enabled, runs of this workflow are included in DORA metrics (deployment frequency, lead time, change failure rate).
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={workflow.is_deployment_workflow ?? false}
+            onClick={() =>
+              updateWorkflowMutation.mutate(!(workflow.is_deployment_workflow ?? false))
+            }
+            disabled={updateWorkflowMutation.isPending}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 disabled:opacity-50 ${
+              workflow.is_deployment_workflow
+                ? 'bg-primary-600'
+                : 'bg-gray-200 dark:bg-gray-700'
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${
+                workflow.is_deployment_workflow ? 'translate-x-5' : 'translate-x-1'
+              }`}
+            />
+          </button>
         </div>
       </div>
 
