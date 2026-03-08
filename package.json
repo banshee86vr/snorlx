@@ -29,7 +29,10 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
-    ]
+    ],
+    "overrides": {
+      "rollup": ">=4.59.0"
+    }
   },
   "engines": {
     "node": ">=18.0.0"

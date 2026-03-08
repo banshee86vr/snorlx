@@ -8,7 +8,7 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 
 - **Centralized Visibility**: Single pane of glass for all workflow runs across repositories
 - **DevOps Metrics**: Deployment Frequency, Lead Time, Change Failure Rate, MTTR
-- **Real-time Updates**: Live pipeline status via Server-Sent Events (SSE)
+- **Real-time Updates**: Live pipeline status via WebSocket
 - **GitHub App Authentication**: Granular permissions, repository-level access
 - **Cost Tracking**: Per-workflow and per-repository cost analysis
 - **Multi-repository Support**: Monitor workflows across multiple repos and organizations
@@ -17,31 +17,49 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Frontend (React)                        │
-│  - TanStack Query for caching & state                        │
-│  - Recharts for metric visualizations                        │
-│  - Tailwind CSS with dark/light themes                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Backend (Go)                            │
-│  - Chi router for REST API                                   │
-│  - SSE for real-time updates                                 │
-│  - GitHub App authentication                                 │
-│  - Webhook event processing                                  │
-│  - Dual storage: Memory or PostgreSQL                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│         PostgreSQL + TimescaleDB (Optional)                  │
-│  - Core entities in PostgreSQL                               │
-│  - Time-series data in TimescaleDB hypertables               │
-│  - Continuous aggregates for DevOps metrics                  │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Browser
+        subgraph Frontend["Frontend &middot; React + TypeScript &middot; :5173 / :5174"]
+            Pages["Pages<br/>Dashboard &middot; Workflows &middot; Runs<br/>Repositories &middot; Settings"]
+            Contexts["Contexts<br/>Auth &middot; Theme &middot; Socket &middot; Sync &middot; Sidebar"]
+            TQ["TanStack Query<br/>Cache + auto-invalidation on WS events"]
+            Pages --> Contexts
+            Contexts --> TQ
+        end
+    end
+
+    subgraph Server["Backend &middot; Go + Chi &middot; :8080 / :3001"]
+        MW["Middleware<br/>CORS &middot; Rate Limit &middot; Auth<br/>CSRF &middot; Security Headers"]
+        REST["REST Handlers<br/>/api/auth &middot; /api/organizations<br/>/api/repositories &middot; /api/workflows<br/>/api/runs &middot; /api/jobs<br/>/api/metrics &middot; /api/dashboard"]
+        WS["WebSocket Hub<br/>Client registry &middot; Broadcast<br/>workflow_run &middot; workflow_job<br/>deployment &middot; sync:*"]
+        WH["Webhook Handler<br/>POST /api/webhooks/github<br/>Signature validation"]
+        GH["GitHub Client<br/>OAuth flow &middot; REST API v3<br/>Repo + workflow sync"]
+        ST["Storage Interface"]
+        MEM["Memory Store<br/>dev"]
+        DB["PostgreSQL Store<br/>production"]
+
+        MW --> REST
+        MW --> WS
+        MW --> WH
+        REST --> GH
+        REST --> ST
+        WH --> ST
+        WH --> WS
+        ST --> MEM
+        ST --> DB
+    end
+
+    TQ -- "REST /api/*" --> MW
+    Contexts -- "WebSocket /ws" --> WS
+    GH -- "OAuth + API calls" --> GitHub["GitHub API<br/>OAuth &middot; Orgs &middot; Repos<br/>Workflows &middot; Runs &middot; Logs"]
+    GitHub -- "Webhook events" --> WH
+    DB --> PG["PostgreSQL + TimescaleDB<br/>Core entities &middot; Hypertables<br/>Continuous aggregates"]
+
+    style Frontend fill:#1e293b,stroke:#3b82f6,color:#e2e8f0
+    style Server fill:#1e293b,stroke:#10b981,color:#e2e8f0
+    style GitHub fill:#1e293b,stroke:#f59e0b,color:#e2e8f0
+    style PG fill:#1e293b,stroke:#8b5cf6,color:#e2e8f0
 ```
 
 ## Quick Start
@@ -89,7 +107,7 @@ Access at: http://localhost:5173
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.26+
 - Node.js 20+
 - pnpm or npm
 - PostgreSQL 14+ with TimescaleDB (optional - only for database mode)
@@ -253,7 +271,7 @@ cp env.example .env
 docker compose up -d
 ```
 
-The dashboard will be available at http://localhost
+The dashboard will be available at http://localhost:5174 (frontend) and http://localhost:3001 (backend API)
 
 3. **View logs**
 
@@ -322,10 +340,11 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 
 #### Storage Configuration
 
-| Variable       | Required                | Default  | Description                  |
-| -------------- | ----------------------- | -------- | ---------------------------- |
-| `STORAGE_MODE` | No                      | `memory` | `memory` or `database`       |
-| `DATABASE_URL` | Only if `database` mode | -        | PostgreSQL connection string |
+| Variable            | Required                | Default  | Description                                    |
+| ------------------- | ----------------------- | -------- | ---------------------------------------------- |
+| `STORAGE_MODE`      | No                      | `memory` | `memory` or `database`                         |
+| `DATABASE_URL`      | Only if `database` mode | -        | PostgreSQL connection string                   |
+| `POSTGRES_PASSWORD` | Only if `database` mode | -        | PostgreSQL password (used by Docker Compose)   |
 
 #### Server Configuration
 
@@ -335,6 +354,7 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 | `LOG_LEVEL`      | Logging level (debug, info, warn, error) | `info`                  |
 | `SESSION_SECRET` | Session encryption key                   | Required                |
 | `FRONTEND_URL`   | Frontend URL for CORS                    | `http://localhost:5173` |
+| `VITE_API_URL`   | Backend API URL for the frontend         | `http://localhost:8080` |
 
 #### GitHub OAuth Configuration
 
@@ -345,7 +365,18 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 | `GITHUB_WEBHOOK_SECRET` | Webhook signature secret       | No (for webhooks only) |
 | `DEV_MODE`              | Skip GitHub OAuth validation   | No                     |
 
+#### Sync Configuration
+
+| Variable     | Required | Default     | Description                                  |
+| ------------ | -------- | ----------- | -------------------------------------------- |
+| `SYNC_LIMIT` | No       | `0` (all)   | Limit number of repos to sync                |
+| `SYNC_REPOS` | No       | -           | Comma-separated list of specific repos to sync |
+
 ## API Endpoints
+
+### Health Check
+
+- `GET /health` - Health check endpoint
 
 ### Authentication
 
@@ -353,6 +384,17 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 - `GET /api/auth/callback` - OAuth callback
 - `POST /api/auth/logout` - Logout
 - `GET /api/auth/status` - Check auth status
+
+### Organizations
+
+- `GET /api/organizations` - List all organizations
+- `GET /api/organizations/:id` - Get organization details
+
+### Repositories
+
+- `GET /api/repositories` - List all repositories
+- `GET /api/repositories/:id` - Get repository details
+- `POST /api/repositories/sync` - Trigger repository sync
 
 ### Workflows
 
@@ -366,7 +408,14 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 - `GET /api/runs/:id` - Get run details
 - `GET /api/runs/:id/jobs` - Get run jobs
 - `GET /api/runs/:id/logs` - Get run logs
+- `GET /api/runs/:id/annotations` - Get run annotations
+- `GET /api/runs/:id/workflow-definition` - Get workflow YAML definition
 - `POST /api/runs/:id/rerun` - Rerun a workflow
+- `POST /api/runs/:id/cancel` - Cancel a running workflow
+
+### Jobs
+
+- `GET /api/jobs/:id/logs` - Get job logs
 
 ### DevOps Metrics
 
@@ -376,9 +425,14 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 - `GET /api/metrics/devops/change-failure-rate` - Change failure rate
 - `GET /api/metrics/devops/mttr` - Mean time to recovery
 
+### Dashboard
+
+- `GET /api/dashboard/summary` - Get dashboard summary
+- `GET /api/dashboard/trends` - Get trend data
+
 ### Real-time
 
-- `GET /api/events` - SSE endpoint for real-time updates
+- `GET /ws` - WebSocket endpoint for real-time updates
 
 ### Webhooks
 
@@ -398,23 +452,28 @@ The dashboard calculates DevOps metrics based on GitHub Actions data:
 ## Project Structure
 
 ```
+├── .github/workflows/      # CI and Security GitHub Actions
 ├── frontend/               # React frontend
 │   ├── src/
-│   │   ├── components/     # UI components
+│   │   ├── components/     # UI components (layout, protected routes)
+│   │   ├── context/        # React contexts (auth, theme, socket, sync, sidebar)
+│   │   ├── lib/            # Utility functions
 │   │   ├── pages/          # Page components
 │   │   ├── services/       # API client
-│   │   ├── context/        # React contexts
+│   │   ├── styles/         # Global styles
+│   │   ├── test/           # Test setup
 │   │   └── types/          # TypeScript types
 │   └── ...
 ├── backend/                # Go backend
 │   ├── cmd/server/         # Main entry point
 │   ├── internal/
 │   │   ├── config/         # Configuration
-│   │   ├── storage/        # Storage layer (memory/database)
-│   │   ├── handlers/       # HTTP handlers
+│   │   ├── database/       # Database migrations and setup
 │   │   ├── github/         # GitHub client
+│   │   ├── handlers/       # HTTP handlers
 │   │   ├── models/         # Data models
-│   │   └── sse/            # Server-Sent Events
+│   │   ├── storage/        # Storage layer (memory/database)
+│   │   └── websocket/      # WebSocket hub for real-time updates
 │   └── ...
 ├── helm/                   # Kubernetes Helm charts
 └── docker-compose.yml      # Docker configuration
@@ -451,6 +510,27 @@ The dashboard calculates DevOps metrics based on GitHub Actions data:
 
 - Rate limiting is active. Wait and retry
 - In production, this prevents abuse
+
+## CI/CD
+
+The project includes two GitHub Actions workflows:
+
+### CI (`ci.yml`)
+
+Runs on push and pull requests to `main`:
+
+- **Backend**: Go vet, tests with race detector and coverage, binary build
+- **Frontend**: Lint, tests with coverage, production build
+
+### Security (`security.yml`)
+
+Runs on push, pull requests to `main`, and weekly (Monday 08:00 UTC):
+
+- **CodeQL Analysis**: Static analysis for Go and JavaScript/TypeScript
+- **Trivy Scans**: Filesystem vulnerability scan plus Docker image scans for both backend and frontend
+- **Dependency Review**: Flags newly introduced vulnerable dependencies on PRs
+- **Go Security**: govulncheck and gosec for Go-specific vulnerabilities
+- **npm Audit**: Checks for known vulnerabilities in Node packages
 
 ## 12-Factor App Compliance
 

@@ -42,7 +42,9 @@ jobs:
 
       - name: Create go.work for CodeQL (monorepo)
         if: matrix.language == 'go'
-        run: echo 'use ./backend' > go.work
+        run: |
+          echo 'go 1.26' > go.work
+          echo 'use ./backend' >> go.work
 
       - name: Autobuild (for Go)
         if: matrix.language == 'go'
@@ -238,10 +240,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run pnpm audit (frontend)
-        run: pnpm --filter snorlx-frontend audit --audit-level=high
-        continue-on-error: true
-
-      - name: Run pnpm audit (root)
+      - name: Run pnpm audit
         run: pnpm audit --audit-level=high
-        continue-on-error: true
+        continue-on-error: false
