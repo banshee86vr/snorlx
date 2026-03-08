@@ -19,50 +19,7 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Browser
-        subgraph Frontend["Frontend &middot; React + TypeScript &middot; :5173 / :5174"]
-            Pages["Pages<br/>Dashboard &middot; Workflows &middot; Runs<br/>Repositories &middot; Settings"]
-            Contexts["Contexts<br/>Auth &middot; Theme &middot; Socket &middot; Sync &middot; Sidebar"]
-            TQ["TanStack Query<br/>Cache + auto-invalidation on WS events"]
-            Pages --> Contexts
-            Contexts --> TQ
-        end
-    end
-
-    subgraph Server["Backend &middot; Go + Chi &middot; :8080 / :3001"]
-        MW["Middleware<br/>CORS &middot; Rate Limit &middot; Auth<br/>CSRF &middot; Security Headers"]
-        REST["REST Handlers<br/>/api/auth &middot; /api/organizations<br/>/api/repositories &middot; /api/workflows<br/>/api/runs &middot; /api/jobs<br/>/api/metrics &middot; /api/dashboard"]
-        WS["WebSocket Hub<br/>Client registry &middot; Broadcast<br/>workflow_run &middot; workflow_job<br/>deployment &middot; sync:*"]
-        WH["Webhook Handler<br/>POST /api/webhooks/github<br/>Signature validation"]
-        GH["GitHub Client<br/>OAuth flow &middot; REST API v3<br/>Repo + workflow sync"]
-        ST["Storage Interface"]
-        MEM["Memory Store<br/>dev"]
-        DB["PostgreSQL Store<br/>production"]
-
-        MW --> REST
-        MW --> WS
-        MW --> WH
-        REST --> GH
-        REST --> ST
-        WH --> ST
-        WH --> WS
-        ST --> MEM
-        ST --> DB
-    end
-
-    TQ -- "REST /api/*" --> MW
-    Contexts -- "WebSocket /ws" --> WS
-    GH -- "OAuth + API calls" --> GitHub["GitHub API<br/>OAuth &middot; Orgs &middot; Repos<br/>Workflows &middot; Runs &middot; Logs"]
-    GitHub -- "Webhook events" --> WH
-    DB --> PG["PostgreSQL + TimescaleDB<br/>Core entities &middot; Hypertables<br/>Continuous aggregates"]
-
-    style Frontend fill:#1e293b,stroke:#3b82f6,color:#e2e8f0
-    style Server fill:#1e293b,stroke:#10b981,color:#e2e8f0
-    style GitHub fill:#1e293b,stroke:#f59e0b,color:#e2e8f0
-    style PG fill:#1e293b,stroke:#8b5cf6,color:#e2e8f0
-```
+![Architecture](docs/architecture.jpg)
 
 ## Quick Start
 
