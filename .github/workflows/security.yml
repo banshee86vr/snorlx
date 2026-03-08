@@ -35,29 +35,41 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
-      - name: Set up Go (for Go analysis)
+      - name: Create go.work for CodeQL (monorepo)
         if: matrix.language == 'go'
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+        run: echo 'use ./backend' > go.work
 
-      - name: Build Go (for CodeQL autobuild)
+      - name: Autobuild (for Go)
         if: matrix.language == 'go'
-        run: go build ./...
-        working-directory: backend
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Set up Node.js (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up pnpm (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        run: pnpm install --frozen-lockfile
 
       - name: Autobuild (for JS/TS)
         if: matrix.language == 'javascript-typescript'
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: /language:${{ matrix.language }}
 
@@ -73,7 +85,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy on filesystem (Go + Node dependencies)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.34.2
         with:
           scan-type: fs
           scan-ref: .
@@ -83,8 +95,8 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy filesystem scan results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: success()
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-fs-results.sarif
           category: trivy-filesystem
@@ -102,7 +114,7 @@ jobs:
         working-directory: backend
 
       - name: Run Trivy on backend image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.34.2
         with:
           image-ref: snorlx-backend:ci
           format: sarif
@@ -111,8 +123,8 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy backend image scan results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: success()
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-backend-image.sarif
           category: trivy-backend-image
@@ -126,11 +138,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build frontend Docker image
-        run: docker build -t snorlx-frontend:ci .
-        working-directory: frontend
+        run: docker build -f frontend/Dockerfile -t snorlx-frontend:ci .
 
       - name: Run Trivy on frontend image
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.34.2
         with:
           image-ref: snorlx-frontend:ci
           format: sarif
@@ -139,8 +150,8 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy frontend image scan results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: success()
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-frontend-image.sarif
           category: trivy-frontend-image
@@ -197,8 +208,8 @@ jobs:
         continue-on-error: true
 
       - name: Upload gosec results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: hashFiles('backend/gosec-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: backend/gosec-results.sarif
           category: gosec
@@ -222,7 +233,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 9
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

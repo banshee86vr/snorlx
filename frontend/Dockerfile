@@ -1,30 +1,36 @@
-# Build stage
+# Build stage — use pnpm from repo root (build context must be repo root)
 FROM node:20-alpine AS builder
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9 --activate
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json* ./
+# Copy workspace and frontend package files (when context is repo root: docker build -f frontend/Dockerfile .)
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY frontend/package.json frontend/package.json
 
-# Install dependencies
-RUN npm install
+# Install dependencies (workspace root)
+RUN pnpm install --frozen-lockfile
 
-# Copy source code
-COPY . .
+# Copy frontend source
+COPY frontend frontend
+
+WORKDIR /app/frontend
 
 # Build
 ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
-RUN npm run build
+RUN pnpm run build
 
 # Production stage
 FROM nginx:alpine
 
 # Copy built assets
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
 # Copy nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose port
 EXPOSE 80

@@ -45,6 +45,7 @@ jobs:
         run: go tool cover -func=coverage.out
 
       - name: Upload coverage report
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
@@ -77,7 +78,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 9
 
       - name: Get pnpm store directory
         id: pnpm-cache
@@ -100,18 +101,20 @@ jobs:
         working-directory: .
 
       - name: Run tests with coverage
-        run: pnpm test:coverage
-        working-directory: frontend
+        run: pnpm --filter snorlx-frontend test:coverage
+        working-directory: .
 
       - name: Upload coverage report
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: frontend-coverage
           path: frontend/coverage/
           retention-days: 7
+          if-no-files-found: ignore
 
       - name: Build
-        run: pnpm build
-        working-directory: frontend
+        run: pnpm --filter snorlx-frontend build
+        working-directory: .
         env:
           VITE_API_URL: ""
