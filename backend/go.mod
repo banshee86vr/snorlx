@@ -3,7 +3,7 @@ module snorlx/backend
 go 1.24.1
 
 require (
-	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.1
 	github.com/go-chi/httprate v0.15.0
 	github.com/google/go-github/v60 v60.0.0
