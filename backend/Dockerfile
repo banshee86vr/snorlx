@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.21-alpine AS builder
+# Build stage — use the same Go version as go.mod
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
@@ -13,11 +13,15 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
+# Build with hardening flags
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags="-s -w" -o server ./cmd/server
 
 # Final stage
 FROM alpine:3.19
+
+# Create a non-root user to run the server
+RUN addgroup -S snorlx && adduser -S -G snorlx snorlx
 
 WORKDIR /app
 
@@ -26,6 +30,11 @@ RUN apk --no-cache add ca-certificates wget
 
 # Copy binary from builder
 COPY --from=builder /app/server .
+
+# Transfer ownership to the non-root user
+RUN chown snorlx:snorlx /app/server
+
+USER snorlx
 
 # Expose port
 EXPOSE 8080

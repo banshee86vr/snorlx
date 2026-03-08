@@ -32,6 +32,22 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// GetUpgraderWithOrigin returns a WebSocket upgrader that only accepts connections
+// from the specified allowed origin. Pass an empty string to allow all origins (insecure).
+func GetUpgraderWithOrigin(allowedOrigin string) websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			if allowedOrigin == "" {
+				return true
+			}
+			origin := r.Header.Get("Origin")
+			return origin == allowedOrigin
+		},
+	}
+}
+
 // Message represents a WebSocket message
 type Message struct {
 	Type string      `json:"type"`

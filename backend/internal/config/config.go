@@ -82,10 +82,19 @@ func Load() (*Config, error) {
 		SyncRepos:           syncRepos,
 	}
 
+	isDevMode := os.Getenv("DEV_MODE") == "true"
+
+	// Validate SESSION_SECRET in production
+	if !isDevMode {
+		if cfg.SessionSecret == "" || cfg.SessionSecret == "change-me-in-production" {
+			return nil, errors.New("SESSION_SECRET must be set to a secure random value in production (not the default)")
+		}
+	}
+
 	// Validate required fields for OAuth
 	if cfg.GitHubClientID == "" || cfg.GitHubClientSecret == "" {
 		// In development mode, allow running without GitHub OAuth credentials
-		if os.Getenv("DEV_MODE") == "true" {
+		if isDevMode {
 			if cfg.GitHubClientID == "" {
 				cfg.GitHubClientID = "dev-client-id"
 			}

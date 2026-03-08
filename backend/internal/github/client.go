@@ -142,11 +142,12 @@ func (c *Client) GetUserClient(ctx context.Context, token *oauth2.Token) *github
 	return github.NewClient(tc)
 }
 
-// ValidateWebhookSignature validates the webhook signature
+// ValidateWebhookSignature validates the webhook signature.
+// Returns false if no secret is configured, rejecting unauthenticated webhooks.
 func (c *Client) ValidateWebhookSignature(payload []byte, signature string) bool {
 	if c.config.GitHubWebhookSecret == "" {
-		log.Warn().Msg("Webhook secret not configured, skipping signature validation")
-		return true
+		log.Error().Msg("Webhook secret not configured; rejecting webhook. Set GITHUB_WEBHOOK_SECRET to enable webhooks.")
+		return false
 	}
 
 	if !strings.HasPrefix(signature, "sha256=") {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -84,6 +86,12 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
+	// Global rate limit: 300 requests per minute per IP
+	r.Use(httprate.LimitByIP(300, time.Minute))
+
+	// Security headers for all responses
+	r.Use(securityHeadersMiddleware)
+
 	// CORS
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{cfg.FrontendURL},
@@ -105,20 +113,26 @@ func main() {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
-		// Auth routes
+		// Set JSON content type for all API responses
+		r.Use(jsonContentTypeMiddleware)
+
+		// Auth routes (stricter rate limit: 20 requests per minute per IP)
 		r.Route("/auth", func(r chi.Router) {
+			r.Use(httprate.LimitByIP(20, time.Minute))
 			r.Get("/login", h.Login)
 			r.Get("/callback", h.Callback)
 			r.Post("/logout", h.Logout)
 			r.Get("/status", h.AuthStatus)
 		})
 
-		// Webhook routes
-		r.Post("/webhooks/github", h.HandleWebhook)
+		// Webhook routes (stricter rate limit: 60 per minute per IP)
+		r.With(httprate.LimitByIP(60, time.Minute)).Post("/webhooks/github", h.HandleWebhook)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {
 			r.Use(h.AuthMiddleware)
+			// CSRF protection: validate Origin header on state-changing requests
+			r.Use(csrfMiddleware(cfg.FrontendURL))
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)
@@ -196,4 +210,41 @@ func main() {
 	}
 
 	log.Info().Msg("Server exited properly")
+}
+
+// securityHeadersMiddleware sets defensive HTTP headers on every response.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// jsonContentTypeMiddleware sets Content-Type: application/json for all /api responses.
+func jsonContentTypeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// csrfMiddleware rejects state-changing requests whose Origin header doesn't match
+// the configured frontend URL, protecting against cross-site request forgery.
+func csrfMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
+				origin := r.Header.Get("Origin")
+				// Allow requests with no Origin (e.g. same-origin direct requests, curl in dev)
+				if origin != "" && !strings.EqualFold(origin, allowedOrigin) {
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

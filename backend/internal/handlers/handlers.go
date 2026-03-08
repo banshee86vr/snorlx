@@ -71,7 +71,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   300,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -146,7 +146,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -222,10 +222,12 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 
 // ===== Webhook Handler =====
 
+const maxWebhookPayloadBytes = 10 * 1024 * 1024 // 10 MB, matches GitHub's max webhook payload
+
 // HandleWebhook processes GitHub webhook events
 func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
-	// Read payload
-	payload, err := io.ReadAll(r.Body)
+	// Read payload with a size limit to prevent memory exhaustion
+	payload, err := io.ReadAll(io.LimitReader(r.Body, maxWebhookPayloadBytes))
 	if err != nil {
 		http.Error(w, "Failed to read payload", http.StatusBadRequest)
 		return
@@ -302,15 +304,21 @@ func (h *Handler) processWebhookEvent(eventType string, event interface{}) {
 
 // WebSocketHandler handles WebSocket connections
 func (h *Handler) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
-	// Get user from context
-	user := h.getUserFromContext(r.Context())
-	userID := 0
-	if user != nil {
-		userID = user.ID
+	// Authenticate via session cookie before upgrading; WebSocket connections
+	// bypass standard HTTP middleware once upgraded, so we must check here.
+	sessionCookie, err := r.Cookie("session")
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	_, user, err := h.storage.GetSession(r.Context(), sessionCookie.Value)
+	if err != nil || user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
 	}
 
-	// Upgrade HTTP connection to WebSocket
-	upgrader := websocket.GetUpgrader()
+	// Upgrade HTTP connection to WebSocket (only from the configured frontend origin)
+	upgrader := websocket.GetUpgraderWithOrigin(h.config.FrontendURL)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to upgrade to WebSocket")
@@ -318,7 +326,7 @@ func (h *Handler) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create client
-	client := websocket.NewClient(generateState(), userID, h.wsHub, conn)
+	client := websocket.NewClient(generateState(), user.ID, h.wsHub, conn)
 
 	// Register client
 	h.wsHub.Register(client)
@@ -1349,4 +1357,10 @@ func generateSessionID() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// isSecureRequest returns true when the connection is HTTPS, either directly
+// (r.TLS is non-nil) or via a TLS-terminating reverse proxy (X-Forwarded-Proto).
+func isSecureRequest(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
