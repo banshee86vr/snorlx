@@ -145,14 +145,17 @@ func (d *DatabaseStorage) ListRepositories(ctx context.Context, page, pageSize i
 
 	// Get total count with search filter
 	var total int
+	var err error
 	if search != "" {
-		d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true AND (LOWER(name) LIKE $1 OR LOWER(full_name) LIKE $1)", searchPattern).Scan(&total)
+		err = d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true AND (LOWER(name) LIKE $1 OR LOWER(full_name) LIKE $1)", searchPattern).Scan(&total)
 	} else {
-		d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true").Scan(&total)
+		err = d.pool.QueryRow(ctx, "SELECT COUNT(*) FROM repositories WHERE is_active = true").Scan(&total)
+	}
+	if err != nil {
+		return nil, 0, err
 	}
 
 	var rows pgx.Rows
-	var err error
 
 	if search != "" {
 		rows, err = d.pool.Query(ctx, `
@@ -602,7 +605,9 @@ func (d *DatabaseStorage) ListRuns(ctx context.Context, filters *models.RunFilte
 
 	// Get total count
 	var total int
-	d.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err := d.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 
 	// Add pagination
 	query += fmt.Sprintf(" ORDER BY wr.started_at DESC LIMIT $%d OFFSET $%d", argCount+1, argCount+2)
@@ -634,6 +639,47 @@ func (d *DatabaseStorage) ListRuns(ctx context.Context, filters *models.RunFilte
 	}
 
 	return runs, total, nil
+}
+
+func (d *DatabaseStorage) ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error) {
+	query := `
+		SELECT wr.id, wr.github_id, wr.workflow_id, wr.repo_id, wr.run_number, wr.name,
+		       wr.status, wr.conclusion, wr.event, wr.branch, wr.commit_sha, wr.commit_message,
+		       wr.actor_login, wr.actor_avatar, wr.html_url, wr.started_at, wr.completed_at,
+		       wr.duration_seconds, wr.commit_timestamp, wr.is_deployment, wr.environment, wr.created_at,
+		       w.name as workflow_name, r.full_name as repo_full_name
+		FROM workflow_runs wr
+		JOIN workflows w ON w.id = wr.workflow_id
+		JOIN repositories r ON r.id = wr.repo_id
+		WHERE wr.status IN ('in_progress', 'queued')
+		ORDER BY wr.started_at DESC
+	`
+	rows, err := d.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []models.WorkflowRun
+	for rows.Next() {
+		var run models.WorkflowRun
+		var workflowName, repoFullName string
+		err := rows.Scan(
+			&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
+			&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.CommitMessage,
+			&run.ActorLogin, &run.ActorAvatar, &run.HTMLURL, &run.StartedAt, &run.CompletedAt,
+			&run.DurationSeconds, &run.CommitTimestamp, &run.IsDeployment, &run.Environment, &run.CreatedAt,
+			&workflowName, &repoFullName,
+		)
+		if err != nil {
+			continue
+		}
+		run.Workflow = &models.Workflow{Name: workflowName}
+		run.Repository = &models.Repository{FullName: repoFullName}
+		runs = append(runs, run)
+	}
+
+	return runs, nil
 }
 
 func (d *DatabaseStorage) GetRun(ctx context.Context, id int) (*models.WorkflowRun, error) {
@@ -912,22 +958,26 @@ func (d *DatabaseStorage) GetDashboardSummary(ctx context.Context) (*models.Dash
 	summary := &models.DashboardSummary{}
 
 	// Get repository stats
-	d.pool.QueryRow(ctx, `
+	if err := d.pool.QueryRow(ctx, `
 		SELECT 
 			COUNT(*),
 			COUNT(*) FILTER (WHERE is_active = true),
 			COUNT(*) FILTER (WHERE is_active = false)
 		FROM repositories
-	`).Scan(&summary.Repositories.Total, &summary.Repositories.Active, &summary.Repositories.Inactive)
+	`).Scan(&summary.Repositories.Total, &summary.Repositories.Active, &summary.Repositories.Inactive); err != nil {
+		return nil, err
+	}
 
 	// Get workflow stats
-	d.pool.QueryRow(ctx, `
+	if err := d.pool.QueryRow(ctx, `
 		SELECT 
 			COUNT(*),
 			COUNT(*) FILTER (WHERE state = 'active'),
 			COUNT(*) FILTER (WHERE state = 'disabled')
 		FROM workflows
-	`).Scan(&summary.Workflows.Total, &summary.Workflows.Active, &summary.Workflows.Disabled)
+	`).Scan(&summary.Workflows.Total, &summary.Workflows.Active, &summary.Workflows.Disabled); err != nil {
+		return nil, err
+	}
 
 	// Get run stats (current month - last 30 days) - using same pattern as GetTrends which works
 	var currentTotal, currentSuccess, currentFailed, currentInProgress, currentQueued, currentCancelled, currentDuration int64
@@ -1017,11 +1067,13 @@ func (d *DatabaseStorage) GetDashboardSummary(ctx context.Context) (*models.Dash
 
 	for rows.Next() {
 		var run models.WorkflowRun
-		rows.Scan(
+		if err := rows.Scan(
 			&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
 			&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.ActorLogin,
 			&run.HTMLURL, &run.StartedAt, &run.CompletedAt, &run.DurationSeconds,
-		)
+		); err != nil {
+			return nil, err
+		}
 		summary.RecentRuns = append(summary.RecentRuns, run)
 	}
 
@@ -1050,10 +1102,12 @@ func (d *DatabaseStorage) GetTrends(ctx context.Context, days int) ([]models.Tre
 	var trends []models.Trend
 	for rows.Next() {
 		var trend models.Trend
-		rows.Scan(
+		if err := rows.Scan(
 			&trend.Date, &trend.TotalRuns, &trend.SuccessfulRuns,
 			&trend.FailedRuns, &trend.AvgDuration, &trend.DeploymentCount,
-		)
+		); err != nil {
+			return nil, err
+		}
 		trends = append(trends, trend)
 	}
 
@@ -1073,10 +1127,12 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 
 	// Get deployment frequency
 	var totalDeploys int
-	d.pool.QueryRow(ctx, `
+	if err := d.pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM workflow_runs
 		WHERE is_deployment = true AND started_at >= $1
-	`, startDate).Scan(&totalDeploys)
+	`, startDate).Scan(&totalDeploys); err != nil {
+		return nil, err
+	}
 
 	deploysPerDay := float64(totalDeploys) / float64(days)
 	metrics.DeploymentFrequency = models.DeploymentFrequency{
@@ -1088,7 +1144,7 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 
 	// Get lead time: commit-to-deploy when commit_timestamp set, else run duration
 	var medianLeadTime float64
-	d.pool.QueryRow(ctx, `
+	if err := d.pool.QueryRow(ctx, `
 		SELECT COALESCE(
 			PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
 				CASE
@@ -1100,7 +1156,9 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 		)
 		FROM workflow_runs
 		WHERE is_deployment = true AND completed_at IS NOT NULL AND started_at >= $1
-	`, startDate).Scan(&medianLeadTime)
+	`, startDate).Scan(&medianLeadTime); err != nil {
+		return nil, err
+	}
 
 	medianLeadTimeInt := int(medianLeadTime)
 	metrics.LeadTime = models.LeadTime{
@@ -1110,11 +1168,13 @@ func (d *DatabaseStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDa
 
 	// Get change failure rate
 	var totalRuns, failedRuns int
-	d.pool.QueryRow(ctx, `
+	if err := d.pool.QueryRow(ctx, `
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE conclusion = 'failure')
 		FROM workflow_runs
 		WHERE is_deployment = true AND started_at >= $1
-	`, startDate).Scan(&totalRuns, &failedRuns)
+	`, startDate).Scan(&totalRuns, &failedRuns); err != nil {
+		return nil, err
+	}
 
 	failureRate := 0.0
 	if totalRuns > 0 {

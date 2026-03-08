@@ -105,7 +105,7 @@ func main() {
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	// WebSocket endpoint (separate from /api for proper proxy handling)
@@ -133,6 +133,9 @@ func main() {
 			r.Use(h.AuthMiddleware)
 			// CSRF protection: validate Origin header on state-changing requests
 			r.Use(csrfMiddleware(cfg.FrontendURL))
+
+			// Pipelines (literal path first so it is not shadowed by /runs/{id})
+			r.Get("/pipelines/active", h.ListActivePipelines)
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)

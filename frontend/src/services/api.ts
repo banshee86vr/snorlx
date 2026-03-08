@@ -112,7 +112,12 @@ export const runsApi = {
 			: `/api/runs/${id}`;
 		return fetchApi<WorkflowRun>(url);
 	},
-	getJobs: (id: number) => fetchApi<WorkflowJob[]>(`/api/runs/${id}/jobs`),
+	getJobs: (id: number, options?: { refresh?: boolean }) => {
+		const url = options?.refresh
+			? `/api/runs/${id}/jobs?refresh=true`
+			: `/api/runs/${id}/jobs`;
+		return fetchApi<WorkflowJob[]>(url);
+	},
 	getLogs: (id: number) =>
 		fetchApi<{ url?: string; message?: string }>(`/api/runs/${id}/logs`),
 	getAnnotations: (id: number) =>
@@ -128,6 +133,12 @@ export const runsApi = {
 // Jobs API
 export const jobsApi = {
 	getLogs: (id: number) => fetchApi<{ url: string }>(`/api/jobs/${id}/logs`),
+};
+
+// Pipelines API (active = in_progress + queued runs)
+export const pipelinesApi = {
+	listActive: (refresh = false) =>
+		fetchApi<WorkflowRun[]>(`/api/pipelines/active${refresh ? "?refresh=true" : ""}`),
 };
 
 // Dashboard API

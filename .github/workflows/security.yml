@@ -214,7 +214,6 @@ jobs:
 
       - name: Run gosec
         run: gosec -fmt sarif -out gosec-results.sarif ./...
-        continue-on-error: true
 
       - name: Upload gosec results
         if: hashFiles('backend/gosec-results.sarif') != ''

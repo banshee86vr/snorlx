@@ -12,8 +12,6 @@ import {
 	ReactFlow,
 	Background,
 	Controls,
-	Handle,
-	Position,
 	useNodesState,
 	useEdgesState,
 	useReactFlow,
@@ -261,11 +259,6 @@ function JobNode({
 					: undefined
 			}
 		>
-			<Handle
-				type="target"
-				position={Position.Left}
-				className="!bg-gray-400 !w-2 !h-2"
-			/>
 			<div className="flex items-center gap-2">
 				<JobStatusIcon status={job.status} conclusion={job.conclusion} />
 				<div className="flex-1 min-w-0 text-left">
@@ -280,11 +273,6 @@ function JobNode({
 					</p>
 				</div>
 			</div>
-			<Handle
-				type="source"
-				position={Position.Right}
-				className="!bg-gray-400 !w-2 !h-2"
-			/>
 		</button>
 	);
 }
@@ -323,11 +311,6 @@ function MatrixGroupNode({
 			)}
 			style={{ width: data.width, height: data.height }}
 		>
-			<Handle
-				type="target"
-				position={Position.Left}
-				className="!bg-gray-400 !w-2 !h-2"
-			/>
 			<div
 				className={cn(
 					"absolute -top-3 left-3 px-2 py-0.5 rounded text-xs font-medium",
@@ -336,11 +319,6 @@ function MatrixGroupNode({
 			>
 				Matrix: {label}
 			</div>
-			<Handle
-				type="source"
-				position={Position.Right}
-				className="!bg-gray-400 !w-2 !h-2"
-			/>
 		</div>
 	);
 }
@@ -384,34 +362,47 @@ function RunDetailInner() {
 	const {
 		data: run,
 		isLoading,
-		refetch: refetchRun,
 		isFetching: isRefetching,
 	} = useQuery({
 		queryKey: ["runs", id],
 		queryFn: () => runsApi.get(Number(id)),
 		enabled: !!id,
-		staleTime: 0, // Always consider stale so sync/WebSocket invalidation refetches
-		refetchInterval: (query) => {
-			const data = query.state.data;
-			// Auto-refresh for in-progress runs or if manual auto-refresh is enabled
-			if (data?.status === "in_progress" || data?.status === "queued") {
-				return 5000;
-			}
-			return autoRefresh ? refreshInterval * 1000 : false;
-		},
+		staleTime: 0,
 	});
 
 	const {
 		data: jobs,
 		isLoading: jobsLoading,
-		refetch: refetchJobs,
 	} = useQuery({
 		queryKey: ["runs", id, "jobs"],
 		queryFn: () => runsApi.getJobs(Number(id)),
 		enabled: !!id,
 		staleTime: 0,
-		refetchInterval: autoRefresh ? refreshInterval * 1000 : false,
 	});
+
+	// Fetch run + jobs from GitHub, update cache directly
+	const refreshFromGitHub = useCallback(async () => {
+		const numId = Number(id);
+		const [freshRun, freshJobs] = await Promise.all([
+			runsApi.get(numId, { refresh: true }),
+			runsApi.getJobs(numId, { refresh: true }),
+		]);
+		queryClient.setQueryData(["runs", id], freshRun);
+		queryClient.setQueryData(["runs", id, "jobs"], freshJobs);
+		return freshRun;
+	}, [id, queryClient]);
+
+	// Poll from GitHub when run is active or auto-refresh is enabled
+	useEffect(() => {
+		if (!run || !id) return;
+		const isActive = run.status === "in_progress" || run.status === "queued";
+		const ms = isActive ? 5000 : autoRefresh ? refreshInterval * 1000 : 0;
+		if (!ms) return;
+		const t = setInterval(() => {
+			refreshFromGitHub().catch(() => {});
+		}, ms);
+		return () => clearInterval(t);
+	}, [run?.status, autoRefresh, refreshInterval, id, refreshFromGitHub]);
 
 	// Fetch workflow definition to get job dependencies (needs)
 	const { data: workflowDefinition } = useQuery({
@@ -432,25 +423,14 @@ function RunDetailInner() {
 			!!id && run?.conclusion === "failure" && (!jobs || jobs.length === 0),
 	});
 
-	// Manual refresh: fetch run from GitHub (backend updates storage), then invalidate so run + jobs refetch (avoids stale refetch overwriting cache)
+	// Manual refresh: fetch run + jobs from GitHub, update cache
 	const refreshRunMutation = useMutation({
-		mutationFn: () => runsApi.get(Number(id), { refresh: true }),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["runs", id] });
-			queryClient.invalidateQueries({ queryKey: ["runs", id, "jobs"] });
-		},
+		mutationFn: () => refreshFromGitHub(),
 	});
 
 	const handleRefresh = useCallback(() => {
-		refreshRunMutation.mutate(undefined, {
-			onSettled: (_data, error) => {
-				if (error) {
-					refetchRun();
-					refetchJobs();
-				}
-			},
-		});
-	}, [refreshRunMutation, refetchRun, refetchJobs]);
+		refreshRunMutation.mutate();
+	}, [refreshRunMutation]);
 
 	const rerunMutation = useMutation({
 		mutationFn: () => runsApi.rerun(Number(id)),
@@ -479,6 +459,10 @@ function RunDetailInner() {
 		},
 		[selectedJob, stepsExpanded],
 	);
+
+	// Stable ref for handleJobClick so node creation doesn't recompute on every selection change
+	const handleJobClickRef = useRef(handleJobClick);
+	handleJobClickRef.current = handleJobClick;
 
 	// Create nodes and edges for ReactFlow using actual workflow definition dependencies
 	const { nodes, edges } = useMemo(() => {
@@ -867,6 +851,10 @@ function RunDetailInner() {
 			if (matrixJobBaseNames.has(jobName)) {
 				return matrixJobBaseNames.get(jobName)!;
 			}
+			// Only use name-parsing heuristic when no workflow definition is available
+			if (workflowDefinition && workflowDefinition.length > 0) {
+				return null;
+			}
 
 			// Check for prefix pattern "prefix / rest"
 			const slashIdx = jobName.indexOf(" / ");
@@ -905,38 +893,41 @@ function RunDetailInner() {
 			return null;
 		};
 
-		// Also group jobs by their base name if multiple jobs share the same base
-		// This helps catch matrix jobs even if the pattern detection missed them
-		const potentialMatrixGroups = new Map<string, WorkflowJob[]>();
-		for (const job of connectedJobs) {
-			// Extract base name (everything before first parenthesis or the whole name)
-			let baseName = job.name;
-			const slashIdx = baseName.indexOf(" / ");
-			if (slashIdx > 0) {
-				baseName = baseName.substring(slashIdx + 3);
-			}
-			const parenIdx = baseName.indexOf("(");
-			if (parenIdx > 0) {
-				baseName = baseName.substring(0, parenIdx).trim();
-			}
-			// Include prefix in key if present
-			const fullKey =
-				slashIdx > 0
-					? job.name.substring(0, slashIdx) + " / " + baseName
-					: baseName;
+		// Only run name-based matrix grouping heuristic when no workflow definition is available
+		if (!workflowDefinition || workflowDefinition.length === 0) {
+			// Also group jobs by their base name if multiple jobs share the same base
+			// This helps catch matrix jobs even if the pattern detection missed them
+			const potentialMatrixGroups = new Map<string, WorkflowJob[]>();
+			for (const job of connectedJobs) {
+				// Extract base name (everything before first parenthesis or the whole name)
+				let baseName = job.name;
+				const slashIdx = baseName.indexOf(" / ");
+				if (slashIdx > 0) {
+					baseName = baseName.substring(slashIdx + 3);
+				}
+				const parenIdx = baseName.indexOf("(");
+				if (parenIdx > 0) {
+					baseName = baseName.substring(0, parenIdx).trim();
+				}
+				// Include prefix in key if present
+				const fullKey =
+					slashIdx > 0
+						? job.name.substring(0, slashIdx) + " / " + baseName
+						: baseName;
 
-			if (!potentialMatrixGroups.has(fullKey)) {
-				potentialMatrixGroups.set(fullKey, []);
+				if (!potentialMatrixGroups.has(fullKey)) {
+					potentialMatrixGroups.set(fullKey, []);
+				}
+				potentialMatrixGroups.get(fullKey)?.push(job);
 			}
-			potentialMatrixGroups.get(fullKey)?.push(job);
-		}
 
-		// If multiple jobs share the same base name, add them to matrixJobBaseNames
-		for (const [baseName, groupJobs] of potentialMatrixGroups.entries()) {
-			if (groupJobs.length > 1) {
-				for (const job of groupJobs) {
-					if (!matrixJobBaseNames.has(job.name)) {
-						matrixJobBaseNames.set(job.name, baseName);
+			// If multiple jobs share the same base name, add them to matrixJobBaseNames
+			for (const [baseName, groupJobs] of potentialMatrixGroups.entries()) {
+				if (groupJobs.length > 1) {
+					for (const job of groupJobs) {
+						if (!matrixJobBaseNames.has(job.name)) {
+							matrixJobBaseNames.set(job.name, baseName);
+						}
 					}
 				}
 			}
@@ -1041,8 +1032,8 @@ function RunDetailInner() {
 								extent: "parent" as const, // Constrain movement within parent
 								data: {
 									job: gJob,
-									selected: selectedJob?.id === gJob.id,
-									onClick: () => handleJobClick(gJob),
+									selected: false,
+									onClick: () => handleJobClickRef.current(gJob),
 								},
 								draggable: false, // Child nodes move with parent, not independently
 								selectable: true,
@@ -1066,8 +1057,8 @@ function RunDetailInner() {
 						},
 						data: {
 							job,
-							selected: selectedJob?.id === job.id,
-							onClick: () => handleJobClick(job),
+							selected: false,
+							onClick: () => handleJobClickRef.current(job),
 						},
 						draggable: true,
 						selectable: true,
@@ -1094,8 +1085,8 @@ function RunDetailInner() {
 					},
 					data: {
 						job,
-						selected: selectedJob?.id === job.id,
-						onClick: () => handleJobClick(job),
+						selected: false,
+						onClick: () => handleJobClickRef.current(job),
 					},
 					draggable: true,
 					selectable: true,
@@ -1120,8 +1111,8 @@ function RunDetailInner() {
 					},
 					data: {
 						job,
-						selected: selectedJob?.id === job.id,
-						onClick: () => handleJobClick(job),
+						selected: false,
+						onClick: () => handleJobClickRef.current(job),
 					},
 					draggable: true,
 					selectable: true,
@@ -1242,21 +1233,18 @@ function RunDetailInner() {
 		}
 
 		return { nodes: nodeList, edges: edgeList };
-	}, [jobs, workflowDefinition, selectedJob, handleJobClick]);
+	}, [jobs, workflowDefinition]);
 
 	// State management for ReactFlow nodes and edges
 	const [stateNodes, setStateNodes, onNodesChange] = useNodesState<Node>([]);
 	const [stateEdges, setStateEdges, onEdgesChange] = useEdgesState<Edge>([]);
 	const { fitView } = useReactFlow();
 
-	// Track if state has been synced with current data
-	const syncedNodesKeyRef = useRef<string>("");
+	// Track if layout has been applied for the current structural key
+	const syncedStructuralKeyRef = useRef<string>("");
 
-	// Track the last jobs data fetch timestamp to detect new data loads
-	const lastJobsLoadRef = useRef<number>(0);
-
-	// Create a stable key based on job IDs to detect data changes
-	const currentNodesKey = useMemo(
+	// Structural key: only changes when jobs are added/removed (triggers re-layout)
+	const structuralKey = useMemo(
 		() =>
 			nodes
 				.map((n) => n.id)
@@ -1265,11 +1253,19 @@ function RunDetailInner() {
 		[nodes],
 	);
 
-	// Check if state is synced with current nodes
-	const isStateSynced =
-		syncedNodesKeyRef.current === currentNodesKey && currentNodesKey !== "";
+	// Data key: changes when job statuses/conclusions change (triggers data-only update)
+	const dataKey = useMemo(() => {
+		if (!jobs) return "";
+		return jobs
+			.map((j) => `${j.id}:${j.status}:${j.conclusion ?? ""}`)
+			.sort()
+			.join(",");
+	}, [jobs]);
 
-	// Compute fresh layout from source nodes
+	const isStructureSynced =
+		syncedStructuralKeyRef.current === structuralKey && structuralKey !== "";
+
+	// Compute fresh layout from source nodes (only used for initial layout or structural changes)
 	const freshLayout = useMemo(() => {
 		if (nodes.length === 0) {
 			return { nodes: [] as Node[], edges: [] as Edge[] };
@@ -1277,14 +1273,25 @@ function RunDetailInner() {
 		return getLayoutedElements(nodes, edges, "LR");
 	}, [nodes, edges]);
 
-	// Get base nodes (either from state or fresh layout)
-	const baseNodes = isStateSynced ? stateNodes : freshLayout.nodes;
-	const baseEdges = isStateSynced ? stateEdges : freshLayout.edges;
+	// When structure hasn't changed, update job data in existing state nodes without re-layout
+	// When structure has changed, use fresh layout
+	const baseNodes = isStructureSynced ? stateNodes : freshLayout.nodes;
+	const baseEdges = isStructureSynced ? stateEdges : freshLayout.edges;
 
-	// Update node selection state and edge animation based on selectedJob
+	// Build a map from job ID to latest job data for fast lookups
+	const jobById = useMemo(() => {
+		const map = new Map<number, WorkflowJob>();
+		if (jobs) {
+			for (const job of jobs) {
+				map.set(job.id, job);
+			}
+		}
+		return map;
+	}, [jobs]);
+
+	// Update node data (job status, selection) without changing positions
 	const layoutedNodes = useMemo(() => {
 		return baseNodes.map((node) => {
-			// Extract job id from node id (format: "job-123")
 			const jobIdMatch = /^job-(\d+)$/.exec(node.id);
 			const nodeData = node.data as {
 				job?: WorkflowJob;
@@ -1292,18 +1299,32 @@ function RunDetailInner() {
 				onClick?: () => void;
 			};
 			if (jobIdMatch && nodeData?.job) {
-				const isSelected = selectedJob?.id === nodeData.job.id;
+				const latestJob = jobById.get(nodeData.job.id) ?? nodeData.job;
+				const isSelected = selectedJob?.id === latestJob.id;
 				return {
 					...node,
 					data: {
 						...nodeData,
+						job: latestJob,
 						selected: isSelected,
+					},
+				};
+			}
+			// Update matrix group nodes with latest job data
+			if (node.type === "matrixGroup" && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
+				const groupJobs = (nodeData as Record<string, unknown>).jobs as WorkflowJob[];
+				const updatedGroupJobs = groupJobs.map((gj) => jobById.get(gj.id) ?? gj);
+				return {
+					...node,
+					data: {
+						...nodeData,
+						jobs: updatedGroupJobs,
 					},
 				};
 			}
 			return node;
 		});
-	}, [baseNodes, selectedJob]);
+	}, [baseNodes, selectedJob, jobById]);
 
 	// Find all edges that lead to the selected node (for animation)
 	const selectedNodeId = selectedJob ? `job-${selectedJob.id}` : null;
@@ -1354,24 +1375,22 @@ function RunDetailInner() {
 	// Build a map from node ID to job for edge coloring
 	const nodeIdToJob = useMemo(() => {
 		const map = new Map<string, WorkflowJob>();
-		if (jobs) {
-			for (const job of jobs) {
-				map.set(`job-${job.id}`, job);
-			}
+		for (const [id, job] of jobById) {
+			map.set(`job-${id}`, job);
 		}
 		return map;
-	}, [jobs]);
+	}, [jobById]);
 
 	// Build a map from group node ID to jobs for matrix group edge coloring
 	const groupIdToJobs = useMemo(() => {
 		const map = new Map<string, WorkflowJob[]>();
-		for (const node of baseNodes) {
+		for (const node of layoutedNodes) {
 			if (node.type === "matrixGroup" && node.data?.jobs) {
 				map.set(node.id, node.data.jobs as WorkflowJob[]);
 			}
 		}
 		return map;
-	}, [baseNodes]);
+	}, [layoutedNodes]);
 
 	// Update edges with animation for paths leading to selected node
 	// Color each edge based on its target node's status
@@ -1421,63 +1440,61 @@ function RunDetailInner() {
 		groupIdToJobs,
 	]);
 
-	// Sync state with fresh layout when nodes change
+	// Apply layout only when the graph structure changes (jobs added/removed)
 	useLayoutEffect(() => {
-		if (currentNodesKey !== syncedNodesKeyRef.current && nodes.length > 0) {
-			syncedNodesKeyRef.current = currentNodesKey;
-			setStateNodes(freshLayout.nodes);
-			setStateEdges(freshLayout.edges);
-		}
-	}, [
-		currentNodesKey,
-		nodes.length,
-		freshLayout,
-		setStateNodes,
-		setStateEdges,
-	]);
+		if (nodes.length === 0) return;
+		if (structuralKey === syncedStructuralKeyRef.current) return;
 
-	// Auto-apply layout on every data load (first load, refresh, or data refetch)
-	useEffect(() => {
-		if (!jobs || jobs.length === 0 || nodes.length === 0) return;
+		syncedStructuralKeyRef.current = structuralKey;
+		setStateNodes(freshLayout.nodes);
+		setStateEdges(freshLayout.edges);
 
-		// Use a timestamp-based approach to detect new data loads
-		const currentLoadTime = Date.now();
-		if (currentLoadTime - lastJobsLoadRef.current < 100) return; // Debounce
-		lastJobsLoadRef.current = currentLoadTime;
-
-		// Apply the dagre layout
-		const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-			nodes,
-			edges,
-			"LR",
-		);
-
-		setStateNodes(layoutedNodes);
-		setStateEdges(layoutedEdges);
-		syncedNodesKeyRef.current = currentNodesKey;
-
-		// Fit view after layout is applied
 		setTimeout(() => {
 			fitView({ padding: 0.2, maxZoom: 1 });
 		}, 50);
-	}, [
-		jobs,
-		nodes,
-		edges,
-		currentNodesKey,
-		setStateNodes,
-		setStateEdges,
-		fitView,
-	]);
+	}, [structuralKey, nodes.length, freshLayout, setStateNodes, setStateEdges, fitView]);
 
-	// Fit view after layout syncs
+	// When only job data changes (status/conclusion), update node data in-place
+	// without resetting layout positions
 	useEffect(() => {
-		if (isStateSynced && layoutedNodes.length > 0) {
-			setTimeout(() => {
-				fitView({ padding: 0.2, maxZoom: 1 });
-			}, 100);
-		}
-	}, [isStateSynced, layoutedNodes.length, fitView]);
+		if (!isStructureSynced || !jobs || jobs.length === 0) return;
+
+		setStateNodes((prevNodes) =>
+			prevNodes.map((node) => {
+				const jobIdMatch = /^job-(\d+)$/.exec(node.id);
+				const nodeData = node.data as { job?: WorkflowJob };
+				if (jobIdMatch && nodeData?.job) {
+					const latestJob = jobById.get(nodeData.job.id);
+					if (latestJob && (latestJob.status !== nodeData.job.status || latestJob.conclusion !== nodeData.job.conclusion)) {
+						return { ...node, data: { ...nodeData, job: latestJob } };
+					}
+				}
+				if (node.type === "matrixGroup" && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
+					const groupJobs = (nodeData as Record<string, unknown>).jobs as WorkflowJob[];
+					const updatedGroupJobs = groupJobs.map((gj) => jobById.get(gj.id) ?? gj);
+					const hasChanges = groupJobs.some((gj, i) => gj.status !== updatedGroupJobs[i].status || gj.conclusion !== updatedGroupJobs[i].conclusion);
+					if (hasChanges) {
+						return { ...node, data: { ...nodeData, jobs: updatedGroupJobs } };
+					}
+				}
+				return node;
+			}),
+		);
+
+		setStateEdges((prevEdges) =>
+			prevEdges.map((edge) => {
+				const targetJob = jobById.get(Number(edge.target.replace("job-", "")));
+				const sourceJob = jobById.get(Number(edge.source.replace("job-", "")));
+				const shouldAnimate =
+					(targetJob?.status === "in_progress") ||
+					(sourceJob?.status === "in_progress");
+				if (edge.animated !== shouldAnimate) {
+					return { ...edge, animated: shouldAnimate };
+				}
+				return edge;
+			}),
+		);
+	}, [dataKey, isStructureSynced, jobs, jobById, setStateNodes, setStateEdges]);
 
 	// Apply dagre layout to nodes and edges (for manual re-layout button)
 	const applyLayout = useCallback(() => {
@@ -1570,12 +1587,15 @@ function RunDetailInner() {
 						<button
 							type="button"
 							onClick={handleRefresh}
-							disabled={isRefetching}
+							disabled={isRefetching || refreshRunMutation.isPending}
 							className="btn-secondary flex items-center gap-2"
-							title="Refresh run data"
+							title="Refresh run data from GitHub"
 						>
 							<RotateCw
-								className={cn("w-4 h-4", isRefetching && "animate-spin")}
+								className={cn(
+									"w-4 h-4",
+									(isRefetching || refreshRunMutation.isPending) && "animate-spin",
+								)}
 							/>
 							Refresh
 						</button>

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	GitBranch,
 	AlertTriangle,
@@ -6,6 +6,7 @@ import {
 	Clock,
 	Loader2,
 	Play,
+	RefreshCw,
 	XCircle,
 	Timer,
 	GitCommit,
@@ -24,14 +25,18 @@ import {
 	Pie,
 	Cell,
 } from "recharts";
-import { dashboardApi, runsApi } from "../services/api";
+import { dashboardApi, pipelinesApi } from "../services/api";
 import { cn, formatRelativeTime, formatDuration, truncate } from "../lib/utils";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
 import type { WorkflowRun } from "../types";
 
 export function Dashboard() {
 	const { isDark } = useTheme();
+	const queryClient = useQueryClient();
+	const [pipelinesRefreshingFromGitHub, setPipelinesRefreshingFromGitHub] =
+		useState(false);
 
 	// Theme-aware chart colors
 	const chartColors = {
@@ -58,24 +63,43 @@ export function Dashboard() {
 		queryFn: () => dashboardApi.getTrends(30),
 	});
 
-	// Fetch running pipelines (in_progress status)
-	const { data: runningPipelines } = useQuery({
-		queryKey: ["pipelines", "running"],
-		queryFn: () => runsApi.list({ status: "in_progress" }, 1),
-		refetchInterval: 10000, // Refresh every 10 seconds for live updates
-	});
-
-	// Fetch pending pipelines (queued status)
-	const { data: pendingPipelines } = useQuery({
-		queryKey: ["pipelines", "pending"],
-		queryFn: () => runsApi.list({ status: "queued" }, 1),
+	// Fetch active pipelines (in_progress + queued) — 10s poll from storage; manual refresh fetches from GitHub
+	const {
+		data: activePipelinesData,
+		dataUpdatedAt,
+		refetch: refetchPipelines,
+		isRefetching: pipelinesRefetching,
+		isError: pipelinesError,
+	} = useQuery({
+		queryKey: ["pipelines", "active"],
+		queryFn: async () => {
+			const res = await pipelinesApi.listActive(false);
+			if (Array.isArray(res)) return res;
+			const data = (res as { data?: WorkflowRun[] })?.data;
+			return Array.isArray(data) ? data : [];
+		},
 		refetchInterval: 10000,
+		refetchOnMount: "always",
 	});
 
-	const activePipelines = [
-		...(runningPipelines?.data || []),
-		...(pendingPipelines?.data || []),
-	];
+	const activePipelines = Array.isArray(activePipelinesData)
+		? activePipelinesData
+		: [];
+
+	const handleRefreshPipelines = async () => {
+		setPipelinesRefreshingFromGitHub(true);
+		try {
+			const freshData = await pipelinesApi.listActive(true);
+			const normalized = Array.isArray(freshData)
+				? freshData
+				: (freshData as { data?: WorkflowRun[] })?.data ?? [];
+			if (Array.isArray(normalized)) {
+				queryClient.setQueryData(["pipelines", "active"], normalized);
+			}
+		} finally {
+			setPipelinesRefreshingFromGitHub(false);
+		}
+	};
 
 	if (summaryLoading) {
 		return <DashboardSkeleton />;
@@ -166,7 +190,7 @@ export function Dashboard() {
 
 			{/* Active Pipelines Grid */}
 			<div>
-				<div className="flex items-center gap-3 mb-4">
+				<div className="flex flex-wrap items-center gap-3 mb-4">
 					<Zap className="w-5 h-5 text-primary-500" />
 					<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
 						Active Pipelines
@@ -176,29 +200,90 @@ export function Dashboard() {
 							({activePipelines.length} running or pending)
 						</span>
 					)}
+					{dataUpdatedAt > 0 && (
+						<span className="text-xs text-gray-400 dark:text-gray-500">
+							Updated{" "}
+							{formatRelativeTime(new Date(dataUpdatedAt).toISOString())}
+						</span>
+					)}
+					<button
+						type="button"
+						onClick={handleRefreshPipelines}
+						disabled={pipelinesRefetching || pipelinesRefreshingFromGitHub}
+						className="ml-auto inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30 disabled:opacity-50"
+						title="Refresh from GitHub (fetch latest run statuses)"
+					>
+						<RefreshCw
+							className={cn(
+								"w-4 h-4",
+								(pipelinesRefetching || pipelinesRefreshingFromGitHub) &&
+									"animate-spin",
+							)}
+						/>
+						Refresh
+					</button>
 				</div>
-				{activePipelines.length > 0 ? (
-					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-						{activePipelines.map((pipeline) => (
-							<PipelineCard key={pipeline.id} pipeline={pipeline} />
-						))}
-					</div>
-				) : (
-					<div className="card p-8">
-						<div className="flex flex-col items-center justify-center text-center">
-							<div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center mb-4">
-								<CheckCircle className="w-8 h-8 text-green-500" />
+				<div
+					className={cn(
+						"transition-[filter,opacity] duration-200",
+						pipelinesRefreshingFromGitHub &&
+							"blur-sm opacity-70 pointer-events-none select-none",
+					)}
+				>
+					{pipelinesError ? (
+						<div className="card p-6">
+							<div className="flex flex-col items-center justify-center text-center">
+								<AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
+								<p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+									Could not load active pipelines.
+								</p>
+								<button
+									type="button"
+									onClick={() => refetchPipelines()}
+									className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600"
+								>
+									<RefreshCw className="w-4 h-4" />
+									Try again
+								</button>
 							</div>
-							<h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-								All pipelines complete
-							</h3>
-							<p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm">
-								No pipelines are currently running or pending. When a workflow
-								starts, it will appear here with a live status indicator.
-							</p>
 						</div>
-					</div>
-				)}
+					) : activePipelines.length > 0 ? (
+						<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+							{activePipelines.map((pipeline) => (
+								<PipelineCard key={pipeline.id} pipeline={pipeline} />
+							))}
+						</div>
+					) : (
+						<div className="card p-8">
+							<div className="flex flex-col items-center justify-center text-center">
+								<div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center mb-4">
+									<CheckCircle className="w-8 h-8 text-green-500" />
+								</div>
+								<h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+									All pipelines complete
+								</h3>
+								<p className="text-sm text-gray-500 dark:text-gray-400 max-w-sm mb-4">
+									No pipelines are currently running or pending. When a workflow
+									starts, it will appear here with a live status indicator.
+								</p>
+								<button
+									type="button"
+									onClick={() => refetchPipelines()}
+									disabled={pipelinesRefetching}
+									className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+								>
+									<RefreshCw
+										className={cn(
+											"w-4 h-4",
+											pipelinesRefetching && "animate-spin",
+										)}
+									/>
+									Refresh
+								</button>
+							</div>
+						</div>
+					)}
+				</div>
 			</div>
 
 			{/* Charts Row */}

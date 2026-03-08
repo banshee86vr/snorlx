@@ -36,6 +36,7 @@ type Storage interface {
 
 	// Workflow Runs
 	ListRuns(ctx context.Context, filters *models.RunFilters, page, pageSize int) ([]models.WorkflowRun, int, error)
+	ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error)
 	GetRun(ctx context.Context, id int) (*models.WorkflowRun, error)
 	GetRunByGitHubID(ctx context.Context, githubID int64) (*models.WorkflowRun, error)
 	UpsertRun(ctx context.Context, run *models.WorkflowRun) (*models.WorkflowRun, error)

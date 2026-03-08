@@ -142,6 +142,9 @@ func (m *mockStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate t
 func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
 	return 0, nil
 }
+func (m *mockStorage) ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error) {
+	return nil, nil
+}
 
 // ===== Test helpers =====
 

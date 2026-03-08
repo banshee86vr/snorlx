@@ -39,6 +39,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 					case "workflow_run":
 						queryClient.invalidateQueries({ queryKey: ["runs"] });
 						queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+						queryClient.invalidateQueries({ queryKey: ["pipelines"] });
 						break;
 					case "workflow_job":
 						queryClient.invalidateQueries({ queryKey: ["jobs"] });

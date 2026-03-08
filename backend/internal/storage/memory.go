@@ -513,6 +513,32 @@ func (m *MemoryStorage) ListRuns(ctx context.Context, filters *models.RunFilters
 	return runs[offset:end], total, nil
 }
 
+func (m *MemoryStorage) ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var runs []models.WorkflowRun
+	for _, run := range m.runs {
+		if run.Status != "in_progress" && run.Status != "queued" {
+			continue
+		}
+		runCopy := *run
+		if wf, ok := m.workflows[run.WorkflowID]; ok {
+			runCopy.Workflow = &models.Workflow{Name: wf.Name}
+		}
+		if repo, ok := m.repositories[run.RepoID]; ok {
+			runCopy.Repository = &models.Repository{FullName: repo.FullName}
+		}
+		runs = append(runs, runCopy)
+	}
+
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].StartedAt.After(runs[j].StartedAt)
+	})
+
+	return runs, nil
+}
+
 func (m *MemoryStorage) GetRun(ctx context.Context, id int) (*models.WorkflowRun, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

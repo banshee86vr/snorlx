@@ -1,16 +1,9 @@
-import { useState } from 'react';
-import { Settings as SettingsIcon, Moon, Sun, Monitor, Bell, Shield, Database } from 'lucide-react';
+import { Settings as SettingsIcon, Moon, Sun, Monitor, Shield, Database } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/utils';
 
 export function Settings() {
   const { theme, setTheme } = useTheme();
-  const [notifications, setNotifications] = useState({
-    email: true,
-    browser: false,
-    failures: true,
-    deployments: false,
-  });
 
   return (
     <div className="space-y-6">
@@ -57,49 +50,6 @@ export function Settings() {
                 ))}
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Notifications */}
-      <div className="card">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center gap-2">
-            <Bell className="w-5 h-5 text-gray-500" />
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Notifications</h2>
-          </div>
-        </div>
-        <div className="p-6">
-          <div className="space-y-4">
-            {[
-              { key: 'email', label: 'Email notifications', description: 'Receive email notifications for important events' },
-              { key: 'browser', label: 'Browser notifications', description: 'Get push notifications in your browser' },
-              { key: 'failures', label: 'Pipeline failures', description: 'Notify when a pipeline fails' },
-              { key: 'deployments', label: 'Deployments', description: 'Notify on successful deployments' },
-            ].map((item) => (
-              <div key={item.key} className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-gray-100">{item.label}</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">{item.description}</p>
-                </div>
-                <button
-                  onClick={() => setNotifications({ ...notifications, [item.key]: !notifications[item.key as keyof typeof notifications] })}
-                  className={cn(
-                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                    notifications[item.key as keyof typeof notifications]
-                      ? 'bg-primary-600'
-                      : 'bg-gray-200 dark:bg-gray-700'
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
-                      notifications[item.key as keyof typeof notifications] ? 'translate-x-6' : 'translate-x-1'
-                    )}
-                  />
-                </button>
-              </div>
-            ))}
           </div>
         </div>
       </div>
