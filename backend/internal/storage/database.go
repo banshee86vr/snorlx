@@ -402,16 +402,100 @@ func (d *DatabaseStorage) ListWorkflows(ctx context.Context, repoID *int) ([]mod
 
 func (d *DatabaseStorage) GetWorkflow(ctx context.Context, id int) (*models.Workflow, error) {
 	var wf models.Workflow
+	var repoFullName sql.NullString
+	var lastRunID, lastRunGitHubID, lastRunNumber sql.NullInt64
+	var lastRunName, lastRunStatus, lastRunConclusion, lastRunEvent, lastRunBranch, lastRunCommitSHA, lastRunActor, lastRunURL sql.NullString
+	var lastRunStartedAt, lastRunCompletedAt sql.NullTime
+	var lastRunDuration sql.NullInt32
+	var totalRuns sql.NullInt64
+	var successRate, avgDuration sql.NullFloat64
+
 	err := d.pool.QueryRow(ctx, `
-		SELECT id, github_id, repo_id, name, path, state, badge_url, html_url, is_deployment_workflow, created_at, updated_at
-		FROM workflows WHERE id = $1
+		SELECT w.id, w.github_id, w.repo_id, w.name, w.path, w.state, w.badge_url, w.html_url,
+		       w.is_deployment_workflow, w.created_at, w.updated_at,
+		       r.full_name as repo_full_name,
+		       lr.id as last_run_id, lr.github_id as last_run_github_id, lr.run_number as last_run_number,
+		       lr.name as last_run_name, lr.status as last_run_status, lr.conclusion as last_run_conclusion,
+		       lr.event as last_run_event, lr.branch as last_run_branch, lr.commit_sha as last_run_commit_sha,
+		       lr.actor_login as last_run_actor, lr.html_url as last_run_url,
+		       lr.started_at as last_run_started_at, lr.completed_at as last_run_completed_at,
+		       lr.duration_seconds as last_run_duration,
+		       stats.total_runs, stats.success_rate, stats.avg_duration
+		FROM workflows w
+		JOIN repositories r ON r.id = w.repo_id
+		LEFT JOIN LATERAL (
+			SELECT wr.id, wr.github_id, wr.run_number, wr.name, wr.status, wr.conclusion,
+			       wr.event, wr.branch, wr.commit_sha, wr.actor_login, wr.html_url,
+			       wr.started_at, wr.completed_at, wr.duration_seconds
+			FROM workflow_runs wr
+			WHERE wr.workflow_id = w.id
+			ORDER BY wr.started_at DESC
+			LIMIT 1
+		) lr ON true
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) as total_runs,
+			       COALESCE(100.0 * COUNT(*) FILTER (WHERE conclusion = 'success') / NULLIF(COUNT(*) FILTER (WHERE conclusion IS NOT NULL), 0), 0) as success_rate,
+			       COALESCE(AVG(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL), 0) as avg_duration
+			FROM workflow_runs wr
+			WHERE wr.workflow_id = w.id
+		) stats ON true
+		WHERE w.id = $1
 	`, id).Scan(
 		&wf.ID, &wf.GitHubID, &wf.RepoID, &wf.Name, &wf.Path, &wf.State, &wf.BadgeURL, &wf.HTMLURL,
-		&wf.IsDeploymentWorkflow, &wf.CreatedAt, &wf.UpdatedAt,
+		&wf.IsDeploymentWorkflow, &wf.CreatedAt, &wf.UpdatedAt, &repoFullName,
+		&lastRunID, &lastRunGitHubID, &lastRunNumber,
+		&lastRunName, &lastRunStatus, &lastRunConclusion,
+		&lastRunEvent, &lastRunBranch, &lastRunCommitSHA,
+		&lastRunActor, &lastRunURL,
+		&lastRunStartedAt, &lastRunCompletedAt, &lastRunDuration,
+		&totalRuns, &successRate, &avgDuration,
 	)
 	if err != nil {
 		return nil, errors.New("workflow not found")
 	}
+
+	if repoFullName.Valid {
+		wf.Repository = &models.Repository{FullName: repoFullName.String}
+	}
+	if totalRuns.Valid {
+		wf.TotalRuns = int(totalRuns.Int64)
+	}
+	if successRate.Valid {
+		wf.SuccessRate = successRate.Float64
+	}
+	if avgDuration.Valid {
+		wf.AvgDuration = int(avgDuration.Float64)
+	}
+	if lastRunID.Valid {
+		wf.LastRun = &models.WorkflowRun{
+			ID:         int(lastRunID.Int64),
+			GitHubID:   lastRunGitHubID.Int64,
+			WorkflowID: wf.ID,
+			RepoID:     wf.RepoID,
+			RunNumber:  int(lastRunNumber.Int64),
+			Name:       lastRunName.String,
+			Status:     lastRunStatus.String,
+			Event:      lastRunEvent.String,
+			Branch:     lastRunBranch.String,
+			CommitSHA:  lastRunCommitSHA.String,
+			ActorLogin: lastRunActor.String,
+			HTMLURL:    lastRunURL.String,
+		}
+		if lastRunConclusion.Valid {
+			wf.LastRun.Conclusion = &lastRunConclusion.String
+		}
+		if lastRunStartedAt.Valid {
+			wf.LastRun.StartedAt = lastRunStartedAt.Time
+		}
+		if lastRunCompletedAt.Valid {
+			wf.LastRun.CompletedAt = &lastRunCompletedAt.Time
+		}
+		if lastRunDuration.Valid {
+			dur := int(lastRunDuration.Int32)
+			wf.LastRun.DurationSeconds = &dur
+		}
+	}
+
 	return &wf, nil
 }
 

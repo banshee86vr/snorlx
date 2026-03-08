@@ -342,7 +342,45 @@ func (m *MemoryStorage) GetWorkflow(ctx context.Context, id int) (*models.Workfl
 	if !ok {
 		return nil, errors.New("workflow not found")
 	}
-	return wf, nil
+
+	wfCopy := *wf
+	if repo, ok := m.repositories[wf.RepoID]; ok {
+		wfCopy.Repository = &models.Repository{FullName: repo.FullName}
+	}
+
+	var lastRun *models.WorkflowRun
+	var lastRunTime time.Time
+	var totalRuns, successfulRuns, completedRuns int
+	var totalDuration int
+	for _, run := range m.runs {
+		if run.WorkflowID == id {
+			totalRuns++
+			if lastRun == nil || run.StartedAt.After(lastRunTime) {
+				runCopy := *run
+				lastRun = &runCopy
+				lastRunTime = run.StartedAt
+			}
+			if run.Conclusion != nil {
+				completedRuns++
+				if *run.Conclusion == "success" {
+					successfulRuns++
+				}
+			}
+			if run.DurationSeconds != nil {
+				totalDuration += *run.DurationSeconds
+			}
+		}
+	}
+	wfCopy.LastRun = lastRun
+	wfCopy.TotalRuns = totalRuns
+	if completedRuns > 0 {
+		wfCopy.SuccessRate = float64(successfulRuns) / float64(completedRuns) * 100.0
+	}
+	if totalRuns > 0 {
+		wfCopy.AvgDuration = totalDuration / totalRuns
+	}
+
+	return &wfCopy, nil
 }
 
 func (m *MemoryStorage) GetWorkflowByGitHubID(ctx context.Context, githubID int64) (*models.Workflow, error) {
