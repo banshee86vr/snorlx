@@ -313,7 +313,7 @@ function MatrixGroupNode({
 		>
 			<div
 				className={cn(
-					"absolute -top-3 left-3 px-2 py-0.5 rounded text-xs font-medium",
+					"absolute -top-3 left-3 px-2 py-0.5 rounded-sm text-xs font-medium",
 					isDark ? "bg-slate-800 text-gray-400" : "bg-gray-200 text-gray-600",
 				)}
 			>
@@ -1556,7 +1556,7 @@ function RunDetailInner() {
 			{/* Inject glow animation styles */}
 			<style>{glowPulseStyles}</style>
 			{/* Header */}
-			<div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+			<div className="shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
 				<div className="flex items-start justify-between">
 					<div className="flex items-center gap-4">
 						<button
@@ -1642,7 +1642,7 @@ function RunDetailInner() {
 								</span>
 								<ChevronDown
 									className={cn(
-										"w-3 h-3 flex-shrink-0 transition-transform",
+										"w-3 h-3 shrink-0 transition-transform",
 										intervalDropdownOpen && "rotate-180",
 									)}
 								/>
@@ -1794,10 +1794,10 @@ function RunDetailInner() {
 								<Controls
 									showInteractive={false}
 									className={cn(
-										"!rounded-lg !shadow-xl [&>button]:!w-7 [&>button]:!h-7",
+										"rounded-lg! shadow-xl! [&>button]:w-7! [&>button]:h-7!",
 										isDark
-											? "!bg-slate-800 !border-slate-600 [&>button]:!bg-slate-700 [&>button]:!border-slate-600 [&>button]:!text-slate-300 [&>button:hover]:!bg-slate-600 [&>button>svg]:!fill-slate-300"
-											: "!bg-white !border-gray-300 [&>button]:!bg-gray-100 [&>button]:!border-gray-300 [&>button]:!text-gray-700 [&>button:hover]:!bg-gray-200 [&>button>svg]:!fill-gray-600",
+											? "bg-slate-800! border-slate-600! [&>button]:bg-slate-700! [&>button]:border-slate-600! [&>button]:text-slate-300! [&>button:hover]:bg-slate-600! [&>button>svg]:fill-slate-300!"
+											: "bg-white! border-gray-300! [&>button]:bg-gray-100! [&>button]:border-gray-300! [&>button]:text-gray-700! [&>button:hover]:bg-gray-200! [&>button>svg]:fill-gray-600!",
 									)}
 								/>
 							</ReactFlow>
@@ -1823,8 +1823,8 @@ function RunDetailInner() {
 								className={cn(
 									"border rounded-2xl p-8 max-w-2xl w-full shadow-2xl",
 									isDark
-										? "bg-gradient-to-br from-red-950/50 to-red-900/30 border-red-700/50 shadow-red-900/20"
-										: "bg-gradient-to-br from-red-50 to-red-100/50 border-red-200 shadow-red-200/50",
+										? "bg-linear-to-br from-red-950/50 to-red-900/30 border-red-700/50 shadow-red-900/20"
+										: "bg-linear-to-br from-red-50 to-red-100/50 border-red-200 shadow-red-200/50",
 								)}
 							>
 								{/* Header */}
@@ -1916,7 +1916,7 @@ function RunDetailInner() {
 												{annotation.path && (
 													<p
 														className={cn(
-															"text-xs mt-3 font-mono inline-block px-2 py-1 rounded",
+															"text-xs mt-3 font-mono inline-block px-2 py-1 rounded-sm",
 															isDark
 																? "text-gray-500 bg-slate-800/50"
 																: "text-gray-500 bg-gray-100",
@@ -1969,7 +1969,7 @@ function RunDetailInner() {
 										href={run.html_url}
 										target="_blank"
 										rel="noopener noreferrer"
-										className="inline-flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 rounded-xl !text-white hover:!text-white font-medium transition-all shadow-lg shadow-red-900/30 hover:shadow-red-900/50"
+										className="inline-flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-500 rounded-xl text-white! hover:text-white! font-medium transition-all shadow-lg shadow-red-900/30 hover:shadow-red-900/50"
 									>
 										<ExternalLink className="w-4 h-4" />
 										View Details on GitHub
@@ -1989,9 +1989,9 @@ function RunDetailInner() {
 				</div>
 
 				{/* Right Panel */}
-				<div className="w-80 flex-shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
+				<div className="w-80 shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
 					{/* Timeline Section */}
-					<div className="flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+					<div className="shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
 						<h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
 							<Clock className="w-3 h-3" />
 							Timeline
@@ -2020,7 +2020,7 @@ function RunDetailInner() {
 
 					{/* Jobs List Section with inline accordions */}
 					<div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-						<div className="flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+						<div className="shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
 							<h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide flex items-center gap-1.5">
 								<FileText className="w-3 h-3" />
 								Jobs ({jobs?.length || 0})
@@ -2075,7 +2075,7 @@ function RunDetailInner() {
 														</div>
 														<ChevronDown
 															className={cn(
-																"w-4 h-4 text-gray-400 transition-transform duration-200 flex-shrink-0",
+																"w-4 h-4 text-gray-400 transition-transform duration-200 shrink-0",
 																isSelected && stepsExpanded && "rotate-180",
 															)}
 														/>
@@ -2130,7 +2130,7 @@ function RunDetailInner() {
 								<div className="p-4">
 									{/* Header */}
 									<div className="flex items-center gap-3 mb-4 p-3 bg-red-950/40 rounded-xl border border-red-700/30">
-										<div className="w-10 h-10 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center flex-shrink-0">
+										<div className="w-10 h-10 rounded-full bg-red-600/20 border border-red-500/30 flex items-center justify-center shrink-0">
 											<AlertTriangle className="w-5 h-5 text-red-400" />
 										</div>
 										<div>
@@ -2182,7 +2182,7 @@ function RunDetailInner() {
 										href={run.html_url}
 										target="_blank"
 										rel="noopener noreferrer"
-										className="flex items-center justify-center gap-2 w-full px-3 py-2 bg-red-600 hover:bg-red-500 rounded-lg !text-white hover:!text-white text-xs font-medium transition-colors"
+										className="flex items-center justify-center gap-2 w-full px-3 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white! hover:text-white! text-xs font-medium transition-colors"
 									>
 										<ExternalLink className="w-3 h-3" />
 										View on GitHub
@@ -2296,37 +2296,37 @@ function JobStatusIcon({
 }) {
 	if (status === "in_progress") {
 		return (
-			<Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+			<Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />
 		);
 	}
 	if (status === "queued" || status === "pending" || status === "waiting") {
 		return (
-			<Circle className="w-4 h-4 text-amber-500 animate-pulse flex-shrink-0" />
+			<Circle className="w-4 h-4 text-amber-500 animate-pulse shrink-0" />
 		);
 	}
 	if (conclusion === "success") {
-		return <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />;
+		return <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />;
 	}
 	if (conclusion === "failure") {
-		return <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />;
+		return <XCircle className="w-4 h-4 text-red-500 shrink-0" />;
 	}
 	if (conclusion === "skipped") {
-		return <Clock className="w-4 h-4 text-gray-400 flex-shrink-0" />;
+		return <Clock className="w-4 h-4 text-gray-400 shrink-0" />;
 	}
-	return <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />;
+	return <Clock className="w-4 h-4 text-amber-500 shrink-0" />;
 }
 
 function StepStatusIcon({ conclusion }: { conclusion: string | null }) {
 	if (conclusion === "success") {
-		return <CheckCircle className="w-3 h-3 text-emerald-500 flex-shrink-0" />;
+		return <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />;
 	}
 	if (conclusion === "failure") {
-		return <XCircle className="w-3 h-3 text-red-500 flex-shrink-0" />;
+		return <XCircle className="w-3 h-3 text-red-500 shrink-0" />;
 	}
 	if (conclusion === "skipped") {
-		return <Clock className="w-3 h-3 text-gray-400 flex-shrink-0" />;
+		return <Clock className="w-3 h-3 text-gray-400 shrink-0" />;
 	}
-	return <Clock className="w-3 h-3 text-gray-400 flex-shrink-0" />;
+	return <Clock className="w-3 h-3 text-gray-400 shrink-0" />;
 }
 
 // Wrapper component that provides ReactFlow context

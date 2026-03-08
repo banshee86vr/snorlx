@@ -44,7 +44,7 @@ export function Workflows() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search workflows..."
-            className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border border-gray-300 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+            className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border border-gray-300 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-hidden dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
           />
           {search && (
             <button
@@ -195,10 +195,10 @@ function WorkflowStatusBadge({ state, lastRun }: { state: string; lastRun?: { co
 function WorkflowsSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-48" />
+      <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-sm w-48" />
       <div className="card p-6 space-y-4">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-16 bg-gray-100 dark:bg-gray-800 rounded" />
+          <div key={i} className="h-16 bg-gray-100 dark:bg-gray-800 rounded-sm" />
         ))}
       </div>
     </div>

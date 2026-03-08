@@ -56,7 +56,7 @@ export function Header() {
 	};
 
 	return (
-		<header className="sticky top-0 z-40 bg-white border-b border-gray-200 isolate dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/5 dark:backdrop-blur-sm">
+		<header className="sticky top-0 z-40 bg-white border-b border-gray-200 isolate dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/5 dark:backdrop-blur-xs">
 			<div className="relative z-10 flex items-center justify-between h-16 px-4 lg:px-6">
 				{/* Mobile menu button */}
 				<button
@@ -177,7 +177,7 @@ export function Header() {
 			{showMobileMenu && (
 				<div className="lg:hidden border-t border-gray-200 bg-white animate-slideIn dark:border-secondary-500/20 dark:bg-slate-800/50">
 					<div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-secondary-500/20">
-						<div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-secondary-600 text-white dark:shadow-lg dark:shadow-secondary-500/50">
+						<div className="flex items-center justify-center w-8 h-8 rounded-lg bg-linear-to-br from-primary-500 to-secondary-600 text-white dark:shadow-lg dark:shadow-secondary-500/50">
 							<GitBranch className="w-5 h-5" />
 						</div>
 						<span className="font-semibold text-gray-900 dark:text-slate-100">

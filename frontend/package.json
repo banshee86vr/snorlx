@@ -15,7 +15,7 @@
     "@tanstack/react-query": "^5.90.21",
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.10.1",
-    "class-variance-authority": "^0.7.0",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
     "lucide-react": "^0.577.0",
@@ -26,6 +26,7 @@
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -35,13 +36,11 @@
     "@typescript-eslint/parser": "^8.56.1",
     "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.18",
-    "autoprefixer": "^10.4.27",
     "eslint": "^10.0.3",
     "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^28.1.0",
-    "postcss": "^8.5.8",
-    "tailwindcss": "^3.4.14",
-    "typescript": "^5.6.3",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
   }

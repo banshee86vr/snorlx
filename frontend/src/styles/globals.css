@@ -1,6 +1,191 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-primary-50: #e8f8f1;
+  --color-primary-100: #d0f0e2;
+  --color-primary-200: #a1e2c5;
+  --color-primary-300: #72d3a8;
+  --color-primary-400: #43c58b;
+  --color-primary-500: #34cb6f;
+  --color-primary-600: #2db865;
+  --color-primary-700: #269a54;
+  --color-primary-800: #1f7d43;
+  --color-primary-900: #186032;
+  --color-primary-950: #0c2818;
+
+  --color-secondary-50: #e8ecf9;
+  --color-secondary-100: #d0d9f2;
+  --color-secondary-200: #a1b3e5;
+  --color-secondary-300: #728dd8;
+  --color-secondary-400: #4367cb;
+  --color-secondary-500: #1d4095;
+  --color-secondary-600: #1a3881;
+  --color-secondary-700: #17306d;
+  --color-secondary-800: #142859;
+  --color-secondary-900: #112045;
+  --color-secondary-950: #0a1023;
+
+  --font-sans: Inter, system-ui, -apple-system, sans-serif;
+
+  --animate-shimmer: shimmer 2s infinite;
+  --animate-float-1: float1 20s ease-in-out infinite;
+  --animate-float-2: float2 25s ease-in-out infinite;
+  --animate-float-3: float3 30s ease-in-out infinite;
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes float1 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(30px, -40px) scale(1.1);
+    }
+    66% {
+      transform: translate(-20px, 30px) scale(0.9);
+    }
+  }
+  @keyframes float2 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(-40px, 30px) scale(0.9);
+    }
+    66% {
+      transform: translate(25px, -35px) scale(1.1);
+    }
+  }
+  @keyframes float3 {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(20px, 40px) scale(1.05);
+    }
+    66% {
+      transform: translate(-30px, -20px) scale(0.95);
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility card {
+  @apply bg-white rounded-lg border border-gray-200 shadow-xs dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/10;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors
+           focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500
+           disabled:pointer-events-none disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 px-4 py-2
+           dark:bg-primary-600 dark:hover:bg-primary-500 dark:shadow-lg dark:shadow-primary-500/50 dark:border dark:border-primary-400/50
+           transition-all font-bold shadow-md hover:shadow-lg
+           dark:font-semibold dark:text-white;
+}
+
+@utility btn-secondary {
+  @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200 px-4 py-2 dark:bg-secondary-900 dark:text-slate-100 dark:hover:bg-secondary-800 dark:border dark:border-secondary-600/50;
+}
+
+@utility btn-ghost {
+  @apply btn hover:bg-gray-100 px-3 py-2 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:border dark:hover:border-primary-400/30 transition-all;
+}
+
+@utility btn-danger {
+  @apply btn bg-red-600 text-white hover:bg-red-700 px-4 py-2
+           dark:bg-red-600 dark:hover:bg-red-500 dark:shadow-lg dark:shadow-red-500/50;
+}
+
+@utility badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+}
+
+@utility badge-success {
+  @apply badge bg-green-100 text-green-800 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border dark:border-emerald-500/50;
+}
+
+@utility badge-warning {
+  @apply badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 dark:border dark:border-amber-500/50;
+}
+
+@utility badge-danger {
+  @apply badge bg-red-100 text-red-800 dark:bg-pink-900/40 dark:text-pink-300 dark:border dark:border-pink-500/50;
+}
+
+@utility badge-info {
+  @apply badge bg-blue-100 text-blue-800 dark:bg-cyan-900/40 dark:text-cyan-300 dark:border dark:border-cyan-500/50;
+}
+
+@utility badge-neutral {
+  @apply badge bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-300 dark:border dark:border-slate-600/50;
+}
+
+@utility input {
+  @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm
+           placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:border-transparent
+           disabled:cursor-not-allowed disabled:opacity-50 dark:border-secondary-500/30 dark:bg-slate-800 dark:text-slate-100
+           dark:placeholder:text-slate-500 dark:focus:ring-primary-500 dark:focus:border-primary-500/50 dark:shadow-lg dark:shadow-primary-500/10;
+}
+
+@utility table-container {
+  @apply overflow-x-auto rounded-lg border border-gray-200 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/10;
+}
+
+@utility table {
+  @apply min-w-full divide-y divide-gray-200 dark:divide-secondary-500/20;
+
+  & thead {
+    @apply bg-gray-50 dark:bg-slate-800/50 dark:border-b dark:border-secondary-500/30;
+  }
+
+  & th {
+    @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-slate-300 dark:font-semibold;
+  }
+
+  & td {
+    @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-slate-100;
+  }
+
+  & tbody tr {
+    @apply bg-white hover:bg-gray-50 transition-colors dark:bg-slate-900/30 dark:hover:bg-slate-800/50 dark:hover:border-l-2 dark:hover:border-l-primary-500/50;
+  }
+
+  & tbody tr:not(:last-child) {
+    @apply border-b border-gray-200 dark:border-slate-700/50;
+  }
+}
 
 @layer base {
   :root {
@@ -71,97 +256,6 @@
   }
 }
 
-@layer components {
-  .card {
-    @apply bg-white rounded-lg border border-gray-200 shadow-sm dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/10;
-  }
-
-  .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors
-           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
-           disabled:pointer-events-none disabled:opacity-50;
-  }
-
-  .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800 px-4 py-2
-           dark:bg-primary-600 dark:hover:bg-primary-500 dark:shadow-lg dark:shadow-primary-500/50 dark:border dark:border-primary-400/50
-           transition-all font-bold shadow-md hover:shadow-lg
-           dark:font-semibold dark:text-white;
-  }
-
-  .btn-secondary {
-    @apply btn bg-gray-100 text-gray-900 hover:bg-gray-200 px-4 py-2 dark:bg-secondary-900 dark:text-slate-100 dark:hover:bg-secondary-800 dark:border dark:border-secondary-600/50;
-  }
-
-  .btn-ghost {
-    @apply btn hover:bg-gray-100 px-3 py-2 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:border dark:hover:border-primary-400/30 transition-all;
-  }
-
-  .btn-danger {
-    @apply btn bg-red-600 text-white hover:bg-red-700 px-4 py-2
-           dark:bg-red-600 dark:hover:bg-red-500 dark:shadow-lg dark:shadow-red-500/50;
-  }
-
-  .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
-  }
-
-  .badge-success {
-    @apply badge bg-green-100 text-green-800 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border dark:border-emerald-500/50;
-  }
-
-  .badge-warning {
-    @apply badge bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 dark:border dark:border-amber-500/50;
-  }
-
-  .badge-danger {
-    @apply badge bg-red-100 text-red-800 dark:bg-pink-900/40 dark:text-pink-300 dark:border dark:border-pink-500/50;
-  }
-
-  .badge-info {
-    @apply badge bg-blue-100 text-blue-800 dark:bg-cyan-900/40 dark:text-cyan-300 dark:border dark:border-cyan-500/50;
-  }
-
-  .badge-neutral {
-    @apply badge bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-300 dark:border dark:border-slate-600/50;
-  }
-
-  .input {
-    @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm
-           placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
-           disabled:cursor-not-allowed disabled:opacity-50 dark:border-secondary-500/30 dark:bg-slate-800 dark:text-slate-100
-           dark:placeholder:text-slate-500 dark:focus:ring-primary-500 dark:focus:border-primary-500/50 dark:shadow-lg dark:shadow-primary-500/10;
-  }
-
-  .table-container {
-    @apply overflow-x-auto rounded-lg border border-gray-200 dark:border-secondary-500/30 dark:shadow-lg dark:shadow-secondary-500/10;
-  }
-
-  .table {
-    @apply min-w-full divide-y divide-gray-200 dark:divide-secondary-500/20;
-  }
-
-  .table thead {
-    @apply bg-gray-50 dark:bg-slate-800/50 dark:border-b dark:border-secondary-500/30;
-  }
-
-  .table th {
-    @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-slate-300 dark:font-semibold;
-  }
-
-  .table td {
-    @apply px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-slate-100;
-  }
-
-  .table tbody tr {
-    @apply bg-white hover:bg-gray-50 transition-colors dark:bg-slate-900/30 dark:hover:bg-slate-800/50 dark:hover:border-l-2 dark:hover:border-l-primary-500/50;
-  }
-
-  .table tbody tr:not(:last-child) {
-    @apply border-b border-gray-200 dark:border-slate-700/50;
-  }
-}
-
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -169,11 +263,11 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100 rounded dark:bg-slate-900/50;
+  @apply bg-gray-100 rounded-sm dark:bg-slate-900/50;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded hover:bg-gray-400 dark:bg-primary-600/60 dark:hover:bg-primary-500 dark:shadow-lg dark:shadow-primary-500/50;
+  @apply bg-gray-300 rounded-sm hover:bg-gray-400 dark:bg-primary-600/60 dark:hover:bg-primary-500 dark:shadow-lg dark:shadow-primary-500/50;
 }
 
 /* Animations */

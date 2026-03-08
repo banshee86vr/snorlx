@@ -1,5 +1,5 @@
 # Build stage — use pnpm from repo root (build context must be repo root)
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@9 --activate
@@ -24,7 +24,7 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm run build
 
 # Production stage
-FROM nginx:1.29.4-alpine
+FROM nginx:1.29.5-alpine
 
 # Copy built assets
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html

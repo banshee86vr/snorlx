@@ -33,7 +33,7 @@ export function Sidebar() {
       <div className="flex flex-col h-full">
         {/* Logo */}
         <div className={cn('flex items-center gap-3 px-6 h-16 border-b border-gray-200 dark:border-secondary-500/20', isCollapsed && 'justify-center')}>
-          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-primary-500 to-secondary-600 text-white flex-shrink-0 dark:shadow-lg dark:shadow-secondary-500/50">
+          <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-linear-to-br from-primary-500 to-secondary-600 text-white shrink-0 dark:shadow-lg dark:shadow-secondary-500/50">
             <GitBranch className="w-6 h-6" />
           </div>
           {!isCollapsed && (
@@ -61,7 +61,7 @@ export function Sidebar() {
                 )
               }
             >
-              <item.icon className="w-5 h-5 flex-shrink-0" />
+              <item.icon className="w-5 h-5 shrink-0" />
               {!isCollapsed && item.name}
             </NavLink>
           ))}

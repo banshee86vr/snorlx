@@ -227,7 +227,7 @@ export function Dashboard() {
 					className={cn(
 						"transition-[filter,opacity] duration-200",
 						pipelinesRefreshingFromGitHub &&
-							"blur-sm opacity-70 pointer-events-none select-none",
+							"blur-xs opacity-70 pointer-events-none select-none",
 					)}
 				>
 					{pipelinesError ? (
@@ -588,7 +588,7 @@ function PipelineCard({ pipeline }: { pipeline: WorkflowRun }) {
 	return (
 		<Link
 			to={`/runs/${pipeline.id}`}
-			className="group relative block overflow-hidden rounded-lg bg-white dark:bg-slate-900/50 border border-gray-200 dark:border-secondary-500/30 shadow-sm hover:shadow-md dark:hover:shadow-lg dark:hover:shadow-primary-500/10 transition-all duration-300"
+			className="group relative block overflow-hidden rounded-lg bg-white dark:bg-slate-900/50 border border-gray-200 dark:border-secondary-500/30 shadow-xs hover:shadow-md dark:hover:shadow-lg dark:hover:shadow-primary-500/10 transition-all duration-300"
 		>
 			{/* Card Content */}
 			<div className="p-4 pb-5">
@@ -596,7 +596,7 @@ function PipelineCard({ pipeline }: { pipeline: WorkflowRun }) {
 				<div className="flex items-start gap-3 mb-3">
 					<div
 						className={cn(
-							"flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
+							"shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
 							isRunning && "bg-blue-100 dark:bg-blue-900/50",
 							isPending && "bg-amber-100 dark:bg-amber-900/50",
 						)}
@@ -621,13 +621,13 @@ function PipelineCard({ pipeline }: { pipeline: WorkflowRun }) {
 				<div className="space-y-2 text-sm">
 					{/* Branch */}
 					<div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-						<GitBranch className="w-3.5 h-3.5 flex-shrink-0" />
+						<GitBranch className="w-3.5 h-3.5 shrink-0" />
 						<span className="truncate">{pipeline.branch}</span>
 					</div>
 
 					{/* Commit */}
 					<div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
-						<GitCommit className="w-3.5 h-3.5 flex-shrink-0" />
+						<GitCommit className="w-3.5 h-3.5 shrink-0" />
 						<span className="font-mono text-xs">
 							{pipeline.commit_sha.slice(0, 7)}
 						</span>
@@ -719,7 +719,7 @@ function EmptyState({
 function DashboardSkeleton() {
 	return (
 		<div className="space-y-6 animate-pulse">
-			<div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-48" />
+			<div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-sm w-48" />
 			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
 				{[...Array(4)].map((_, i) => (
 					<div key={i} className="card p-6 h-32" />

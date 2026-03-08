@@ -1,9 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // https://vitejs.dev/config/
 export default defineConfig({
-	plugins: [react()],
+	plugins: [tailwindcss(), react()],
 	resolve: {
 		alias: {
 			"@": "/src",
@@ -29,15 +30,17 @@ export default defineConfig({
 				target: "http://localhost:8080",
 				changeOrigin: true,
 				configure: (proxy) => {
-					// Silence proxy errors for long-running requests
-					proxy.on("error", (err, _req, res) => {
+					// Silence proxy errors for long-running requests (proxy is http-proxy at runtime)
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					(proxy as any).on("error", (err: Error, _req: unknown, res: unknown) => {
 						if (err.message.includes("socket hang up") || err.message.includes("ECONNRESET")) {
 							return;
 						}
 						console.error("[vite proxy error]", err.message);
-						if (res && "writeHead" in res) {
-							res.writeHead(502, { "Content-Type": "text/plain" });
-							res.end("Proxy error");
+						const resObj = res as { writeHead?: (code: number, headers: Record<string, string>) => void; end?: (body: string) => void };
+						if (resObj?.writeHead && resObj?.end) {
+							resObj.writeHead(502, { "Content-Type": "text/plain" });
+							resObj.end("Proxy error");
 						}
 					});
 				},

@@ -28,7 +28,7 @@ const PERIODS = [
 ];
 
 function ratingBadgeClass(rating: string, isDark: boolean) {
-	const base = "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium capitalize ";
+	const base = "inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium capitalize ";
 	switch (rating) {
 		case "elite":
 			return base + (isDark ? "bg-emerald-500/20 text-emerald-400" : "bg-emerald-100 text-emerald-700");

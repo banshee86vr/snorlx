@@ -15,7 +15,7 @@ export function Layout({ children }: LayoutProps) {
   const { sync } = useSync();
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 dark:bg-gradient-to-br dark:from-slate-950 dark:via-slate-900 dark:to-primary-900/20">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 dark:bg-linear-to-br dark:from-slate-950 dark:via-slate-900 dark:to-primary-900/20">
       <Sidebar />
       <div className={cn(
         'transition-all duration-300',
@@ -31,7 +31,7 @@ export function Layout({ children }: LayoutProps) {
       {sync.isSyncing && (
         <>
           {/* Overlay */}
-          <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40" />
+          <div className="fixed inset-0 bg-black/30 backdrop-blur-xs z-40" />
 
           {/* Progress Box - Perfectly centered in viewport */}
           <div
@@ -65,7 +65,7 @@ export function Layout({ children }: LayoutProps) {
               )}
               <div className="w-full h-2 bg-primary-200 dark:bg-primary-800/50 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-primary-500 to-primary-600 dark:from-primary-500 dark:to-primary-400 transition-all duration-300 ease-out"
+                  className="h-full bg-linear-to-r from-primary-500 to-primary-600 dark:from-primary-500 dark:to-primary-400 transition-all duration-300 ease-out"
                   style={{ width: `${sync.progress}%` }}
                 />
               </div>

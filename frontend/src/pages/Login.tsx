@@ -16,15 +16,15 @@ export function Login() {
       <div className="absolute inset-0 overflow-hidden">
         {/* Animated gradient orbs with random floating movement */}
         <div 
-          className="absolute top-0 -left-1/4 w-[900px] h-[900px] bg-gradient-to-br from-primary-500/60 to-primary-600/50 rounded-full blur-[140px]"
+          className="absolute top-0 -left-1/4 w-[900px] h-[900px] bg-linear-to-br from-primary-500/60 to-primary-600/50 rounded-full blur-[140px]"
           style={{ animation: 'float1 10s ease-in-out infinite' }}
         ></div>
         <div 
-          className="absolute bottom-0 -right-1/4 w-[1000px] h-[1000px] bg-gradient-to-tl from-secondary-600/60 to-secondary-700/50 rounded-full blur-[140px]"
+          className="absolute bottom-0 -right-1/4 w-[1000px] h-[1000px] bg-linear-to-tl from-secondary-600/60 to-secondary-700/50 rounded-full blur-[140px]"
           style={{ animation: 'float2 12s ease-in-out infinite' }}
         ></div>
         <div 
-          className="absolute top-1/3 left-1/3 w-[800px] h-[800px] bg-gradient-to-r from-primary-500/50 via-cyan-500/50 to-secondary-600/50 rounded-full blur-[140px]"
+          className="absolute top-1/3 left-1/3 w-[800px] h-[800px] bg-linear-to-r from-primary-500/50 via-cyan-500/50 to-secondary-600/50 rounded-full blur-[140px]"
           style={{ animation: 'float3 14s ease-in-out infinite' }}
         ></div>
         
@@ -39,7 +39,7 @@ export function Login() {
         ></div>
         
         {/* Grid pattern overlay */}
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(52,203,111,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(52,203,111,0.03)_1px,transparent_1px)] bg-[size:64px_64px]"></div>
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(52,203,111,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(52,203,111,0.03)_1px,transparent_1px)] bg-size-[64px_64px]"></div>
         
         {/* Radial gradient overlay for vignette effect */}
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(2,6,23,0.5)_50%,rgba(2,6,23,0.8)_100%)]"></div>
@@ -48,7 +48,7 @@ export function Login() {
       <div className="w-full max-w-md relative z-10">
         {/* Logo and Title */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-lg bg-gradient-to-br from-primary-500 to-secondary-600 text-white mb-4 shadow-lg shadow-primary-500/50 animate-glow">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-lg bg-linear-to-br from-primary-500 to-secondary-600 text-white mb-4 shadow-lg shadow-primary-500/50 animate-glow">
             <GitBranch className="w-10 h-10" />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Snorlx</h1>
