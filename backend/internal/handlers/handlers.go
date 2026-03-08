@@ -370,7 +370,13 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	pageSize := 20
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
 	search := r.URL.Query().Get("search")
 
 	repos, total, err := h.storage.ListRepositories(r.Context(), page, pageSize, search)

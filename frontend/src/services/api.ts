@@ -50,10 +50,13 @@ export const organizationsApi = {
 
 // Repositories API
 export const repositoriesApi = {
-	list: (page = 1, search?: string) => {
+	list: (page = 1, search?: string, perPage?: number) => {
 		const params = new URLSearchParams({ page: String(page) });
 		if (search) {
 			params.append("search", search);
+		}
+		if (perPage != null && perPage > 0) {
+			params.append("per_page", String(perPage));
 		}
 		return fetchApi<ListResponse<Repository>>(`/api/repositories?${params}`);
 	},
