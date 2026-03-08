@@ -390,6 +390,7 @@ function RunDetailInner() {
 		queryKey: ["runs", id],
 		queryFn: () => runsApi.get(Number(id)),
 		enabled: !!id,
+		staleTime: 0, // Always consider stale so sync/WebSocket invalidation refetches
 		refetchInterval: (query) => {
 			const data = query.state.data;
 			// Auto-refresh for in-progress runs or if manual auto-refresh is enabled
@@ -408,6 +409,7 @@ function RunDetailInner() {
 		queryKey: ["runs", id, "jobs"],
 		queryFn: () => runsApi.getJobs(Number(id)),
 		enabled: !!id,
+		staleTime: 0,
 		refetchInterval: autoRefresh ? refreshInterval * 1000 : false,
 	});
 
@@ -430,11 +432,25 @@ function RunDetailInner() {
 			!!id && run?.conclusion === "failure" && (!jobs || jobs.length === 0),
 	});
 
-	// Manual refresh handler
+	// Manual refresh: fetch run from GitHub (backend updates storage), then invalidate so run + jobs refetch (avoids stale refetch overwriting cache)
+	const refreshRunMutation = useMutation({
+		mutationFn: () => runsApi.get(Number(id), { refresh: true }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["runs", id] });
+			queryClient.invalidateQueries({ queryKey: ["runs", id, "jobs"] });
+		},
+	});
+
 	const handleRefresh = useCallback(() => {
-		refetchRun();
-		refetchJobs();
-	}, [refetchRun, refetchJobs]);
+		refreshRunMutation.mutate(undefined, {
+			onSettled: (_data, error) => {
+				if (error) {
+					refetchRun();
+					refetchJobs();
+				}
+			},
+		});
+	}, [refreshRunMutation, refetchRun, refetchJobs]);
 
 	const rerunMutation = useMutation({
 		mutationFn: () => runsApi.rerun(Number(id)),

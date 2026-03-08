@@ -100,7 +100,12 @@ export const runsApi = {
 		}
 		return fetchApi<ListResponse<WorkflowRun>>(`/api/runs?${params}`);
 	},
-	get: (id: number) => fetchApi<WorkflowRun>(`/api/runs/${id}`),
+	get: (id: number, options?: { refresh?: boolean }) => {
+		const url = options?.refresh
+			? `/api/runs/${id}?refresh=true`
+			: `/api/runs/${id}`;
+		return fetchApi<WorkflowRun>(url);
+	},
 	getJobs: (id: number) => fetchApi<WorkflowJob[]>(`/api/runs/${id}/jobs`),
 	getLogs: (id: number) =>
 		fetchApi<{ url?: string; message?: string }>(`/api/runs/${id}/logs`),

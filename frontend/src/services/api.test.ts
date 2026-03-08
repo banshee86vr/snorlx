@@ -12,7 +12,7 @@ import {
 // ===== fetch mock setup =====
 
 function mockFetch(body: unknown, status = 200) {
-  global.fetch = vi.fn().mockResolvedValue({
+  globalThis.fetch = vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe("fetchApi error handling", () => {
   it("throws on non-ok response", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
       json: () => Promise.resolve({}),
@@ -39,7 +39,7 @@ describe("fetchApi error handling", () => {
   });
 
   it("throws with HTTP error message when body is empty", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
       json: () => Promise.resolve({}),

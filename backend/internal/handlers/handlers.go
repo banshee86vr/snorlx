@@ -694,14 +694,40 @@ func (h *Handler) listRunsWithFilter(w http.ResponseWriter, r *http.Request, bas
 	})
 }
 
-// GetRun gets a single run
+// GetRun gets a single run. If query param refresh=true is set, fetches the latest
+// from GitHub, updates storage, and returns the updated run (avoids stale data after sync).
 func (h *Handler) GetRun(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	refresh := r.URL.Query().Get("refresh") == "true" || r.URL.Query().Get("refresh") == "1"
 
 	run, err := h.storage.GetRun(r.Context(), id)
 	if err != nil {
 		http.Error(w, "Run not found", http.StatusNotFound)
 		return
+	}
+
+	if refresh {
+		user := h.getUserFromContext(r.Context())
+		if user != nil {
+			repo, errRepo := h.storage.GetRepository(r.Context(), run.RepoID)
+			if errRepo == nil {
+				parts := strings.Split(repo.FullName, "/")
+				if len(parts) == 2 {
+					owner, repoName := parts[0], parts[1]
+					token := &oauth2.Token{AccessToken: user.AccessToken}
+					client := h.ghClient.GetUserClient(r.Context(), token)
+					ghRun, errGH := h.ghClient.GetWorkflowRun(r.Context(), client, owner, repoName, run.GitHubID)
+					if errGH == nil {
+						updated := h.convertWorkflowRun(ghRun, nil)
+						updated.RepoID = run.RepoID
+						updated.WorkflowID = run.WorkflowID
+						if saved, errUpsert := h.storage.UpsertRun(r.Context(), updated); errUpsert == nil {
+							run = saved
+						}
+					}
+				}
+			}
+		}
 	}
 
 	json.NewEncoder(w).Encode(run)
