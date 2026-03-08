@@ -623,6 +623,144 @@ func (h *Handler) runSync(ctx context.Context, accessToken string) {
 	h.wsHub.BroadcastSyncComplete(syncedRepos, syncedWorkflows, syncedRuns)
 }
 
+// runSyncOneRepo syncs workflows and runs for a single repository (light sync).
+// repo must exist in storage; owner/name are derived from repo.FullName.
+func (h *Handler) runSyncOneRepo(ctx context.Context, client *gh.Client, repo *models.Repository) (syncedWorkflows, syncedRuns int, err error) {
+	parts := strings.SplitN(repo.FullName, "/", 2)
+	if len(parts) != 2 {
+		return 0, 0, errors.New("invalid repository full_name")
+	}
+	owner, repoName := parts[0], parts[1]
+
+	ghWorkflows, err := h.ghClient.ListWorkflows(ctx, client, owner, repoName)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	workflowIDMap := make(map[int64]int)
+	workflowPathMap := make(map[int64]string)
+	workflowNameMap := make(map[int64]string)
+	workflowDeploymentMap := make(map[int64]bool)
+
+	for _, ghWorkflow := range ghWorkflows {
+		workflow := &models.Workflow{
+			GitHubID:             ghWorkflow.GetID(),
+			RepoID:               repo.ID,
+			Name:                 ghWorkflow.GetName(),
+			Path:                 ghWorkflow.GetPath(),
+			State:                ghWorkflow.GetState(),
+			IsDeploymentWorkflow: false,
+		}
+		if ghWorkflow.BadgeURL != nil {
+			workflow.BadgeURL = ghWorkflow.BadgeURL
+		}
+		if ghWorkflow.HTMLURL != nil {
+			workflow.HTMLURL = ghWorkflow.HTMLURL
+		}
+
+		savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflow)
+		if err != nil {
+			log.Error().Err(err).Str("workflow", ghWorkflow.GetName()).Msg("Failed to save workflow")
+			continue
+		}
+		syncedWorkflows++
+		workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
+		workflowPathMap[ghWorkflow.GetID()] = ghWorkflow.GetPath()
+		workflowNameMap[ghWorkflow.GetID()] = ghWorkflow.GetName()
+		workflowDeploymentMap[ghWorkflow.GetID()] = savedWorkflow.IsDeploymentWorkflow
+	}
+
+	ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
+	if err != nil {
+		return syncedWorkflows, syncedRuns, err
+	}
+
+	for _, ghRun := range ghRuns {
+		workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
+		if !ok {
+			continue
+		}
+
+		run := &models.WorkflowRun{
+			GitHubID:   ghRun.GetID(),
+			WorkflowID: workflowID,
+			RepoID:     repo.ID,
+			RunNumber:  ghRun.GetRunNumber(),
+			Name:       ghRun.GetName(),
+			Status:     ghRun.GetStatus(),
+			Event:      ghRun.GetEvent(),
+			Branch:     ghRun.GetHeadBranch(),
+			CommitSHA:  ghRun.GetHeadSHA(),
+			ActorLogin: ghRun.GetActor().GetLogin(),
+			HTMLURL:    ghRun.GetHTMLURL(),
+			StartedAt:  ghRun.GetRunStartedAt().Time,
+		}
+
+		if ghRun.Conclusion != nil {
+			run.Conclusion = ghRun.Conclusion
+		}
+		if ghRun.GetActor() != nil {
+			avatar := ghRun.GetActor().GetAvatarURL()
+			run.ActorAvatar = &avatar
+		}
+		if !ghRun.GetUpdatedAt().IsZero() && ghRun.GetStatus() == "completed" {
+			completedAt := ghRun.GetUpdatedAt().Time
+			run.CompletedAt = &completedAt
+			duration := int(completedAt.Sub(run.StartedAt).Seconds())
+			run.DurationSeconds = &duration
+		}
+
+		run.IsDeployment = workflowDeploymentMap[ghRun.GetWorkflowID()] || isDeploymentRun(workflowNameMap[ghRun.GetWorkflowID()], workflowPathMap[ghRun.GetWorkflowID()], ghRun.GetEvent())
+
+		if _, err := h.storage.UpsertRun(ctx, run); err != nil {
+			log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
+			continue
+		}
+		syncedRuns++
+	}
+
+	return syncedWorkflows, syncedRuns, nil
+}
+
+// SyncRepository performs a light sync for a single repository (workflows + runs only).
+// Used after re-run so the new run appears without a full sync.
+func (h *Handler) SyncRepository(w http.ResponseWriter, r *http.Request) {
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	repoID, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	if repoID <= 0 {
+		http.Error(w, "Invalid repository ID", http.StatusBadRequest)
+		return
+	}
+
+	repo, err := h.storage.GetRepository(r.Context(), repoID)
+	if err != nil || repo == nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	workflows, runs, err := h.runSyncOneRepo(r.Context(), client, repo)
+	if err != nil {
+		log.Error().Err(err).Int("repo_id", repoID).Str("repo", repo.FullName).Msg("Light sync failed")
+		http.Error(w, "Sync failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"workflows": workflows,
+		"runs":      runs,
+	})
+}
+
 // BackfillDeploymentRuns retroactively sets is_deployment on existing workflow runs that match deployment heuristics.
 func (h *Handler) BackfillDeploymentRuns(w http.ResponseWriter, r *http.Request) {
 	updated, err := h.storage.BackfillDeploymentRuns(r.Context())
@@ -1263,14 +1401,120 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(allDependencies)
 }
 
-// RerunWorkflow reruns a workflow
+// RerunWorkflow reruns a workflow on GitHub
 func (h *Handler) RerunWorkflow(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	if err := h.ghClient.RerunWorkflow(r.Context(), client, owner, repoName, run.GitHubID); err != nil {
+		log.Error().Err(err).Int("run_id", id).Int64("github_id", run.GitHubID).Msg("Failed to re-run workflow")
+		errMsg := err.Error()
+		var ghErr *gh.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil {
+			switch ghErr.Response.StatusCode {
+			case http.StatusConflict:
+				if strings.Contains(errMsg, "re-run") && strings.Contains(errMsg, "not yet") {
+					http.Error(w, "This run cannot be re-run yet. Try again in a moment.", http.StatusConflict)
+					return
+				}
+				http.Error(w, "Re-run not allowed: "+errMsg, http.StatusConflict)
+				return
+			case http.StatusForbidden:
+				http.Error(w, "You do not have permission to re-run this workflow.", http.StatusForbidden)
+				return
+			case http.StatusNotFound:
+				http.Error(w, "Workflow run not found on GitHub.", http.StatusNotFound)
+				return
+			}
+		}
+		http.Error(w, "Failed to re-run: "+errMsg, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// CancelRun cancels a workflow run
+// CancelRun cancels a workflow run on GitHub
 func (h *Handler) CancelRun(w http.ResponseWriter, r *http.Request) {
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	run, err := h.storage.GetRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+
+	if run.Status != "in_progress" && run.Status != "queued" {
+		http.Error(w, "Run cannot be cancelled (not in progress or queued)", http.StatusBadRequest)
+		return
+	}
+
+	repo, err := h.storage.GetRepository(r.Context(), run.RepoID)
+	if err != nil {
+		http.Error(w, "Repository not found", http.StatusNotFound)
+		return
+	}
+
+	parts := strings.Split(repo.FullName, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid repository name", http.StatusInternalServerError)
+		return
+	}
+	owner, repoName := parts[0], parts[1]
+
+	token := &oauth2.Token{AccessToken: user.AccessToken}
+	client := h.ghClient.GetUserClient(r.Context(), token)
+
+	if err := h.ghClient.CancelWorkflowRun(r.Context(), client, owner, repoName, run.GitHubID); err != nil {
+		log.Error().Err(err).Int("run_id", id).Int64("github_id", run.GitHubID).Msg("Failed to cancel workflow run")
+		errMsg := err.Error()
+		// GitHub returns 409 for re-runs that have not yet queued - return user-friendly message
+		var ghErr *gh.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusConflict {
+			if strings.Contains(errMsg, "re-run") && strings.Contains(errMsg, "not yet queued") {
+				http.Error(w, "This run cannot be cancelled yet. Re-runs must be queued before they can be cancelled. Try again in a moment.", http.StatusConflict)
+				return
+			}
+		}
+		http.Error(w, "Failed to cancel run: "+errMsg, http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
 // ===== DevOps Metrics Handlers =====

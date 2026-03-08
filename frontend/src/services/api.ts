@@ -64,6 +64,11 @@ export const repositoriesApi = {
 	get: (id: number) => fetchApi<Repository>(`/api/repositories/${id}`),
 	sync: () =>
 		fetchApi<{ status: string }>("/api/repositories/sync", { method: "POST" }),
+	syncRepo: (id: number) =>
+		fetchApi<{ status: string; workflows: number; runs: number }>(
+			`/api/repositories/${id}/sync`,
+			{ method: "POST" },
+		),
 };
 
 // Workflows API

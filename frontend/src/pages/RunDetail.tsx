@@ -180,7 +180,7 @@ import {
 	AlertTriangle,
 	LayoutGrid,
 } from "lucide-react";
-import { runsApi, jobsApi } from "../services/api";
+import { runsApi, jobsApi, repositoriesApi } from "../services/api";
 import {
 	cn,
 	formatDuration,
@@ -337,6 +337,8 @@ function RunDetailInner() {
 	const [refreshInterval, setRefreshInterval] = useState(15); // seconds
 	const [intervalDropdownOpen, setIntervalDropdownOpen] = useState(false);
 	const intervalDropdownRef = useRef<HTMLDivElement>(null);
+	const [cancelError, setCancelError] = useState<string | null>(null);
+	const [rerunError, setRerunError] = useState<string | null>(null);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -434,15 +436,40 @@ function RunDetailInner() {
 
 	const rerunMutation = useMutation({
 		mutationFn: () => runsApi.rerun(Number(id)),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["runs", id] });
+		onSuccess: async () => {
+			setRerunError(null);
+			// Light sync: only this run's repo so the new run appears without a full sync
+			try {
+				if (run?.repo_id != null) {
+					await repositoriesApi.syncRepo(run.repo_id);
+				}
+			} finally {
+				queryClient.invalidateQueries({ queryKey: ["runs"] });
+				queryClient.invalidateQueries({ queryKey: ["runs", id] });
+				queryClient.invalidateQueries({ queryKey: ["runs", id, "jobs"] });
+				if (run?.workflow_id != null) {
+					queryClient.invalidateQueries({
+						queryKey: ["workflows", run.workflow_id, "runs"],
+					});
+				}
+			}
+		},
+		onError: (err: Error) => {
+			console.error("Re-run failed:", err);
+			setRerunError(err.message || "Failed to re-run workflow");
 		},
 	});
 
 	const cancelMutation = useMutation({
 		mutationFn: () => runsApi.cancel(Number(id)),
 		onSuccess: () => {
+			setCancelError(null);
 			queryClient.invalidateQueries({ queryKey: ["runs", id] });
+			queryClient.invalidateQueries({ queryKey: ["runs", id, "jobs"] });
+		},
+		onError: (err: Error) => {
+			console.error("Cancel run failed:", err);
+			setCancelError(err.message || "Failed to cancel run");
 		},
 	});
 
@@ -1555,6 +1582,37 @@ function RunDetailInner() {
 		>
 			{/* Inject glow animation styles */}
 			<style>{glowPulseStyles}</style>
+
+			{/* Cancel / Re-run error overlay - center middle of page */}
+			{(cancelError || rerunError) && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+					role="alert"
+					aria-live="assertive"
+				>
+					<div
+						className={cn(
+							"flex items-center gap-3 px-5 py-4 rounded-xl text-sm max-w-md shadow-2xl",
+							"bg-red-50 dark:bg-red-950/90 border-2 border-red-200 dark:border-red-700 text-red-800 dark:text-red-200",
+						)}
+					>
+						<AlertTriangle className="w-6 h-6 shrink-0 text-red-500" />
+						<span className="flex-1">{cancelError ?? rerunError}</span>
+						<button
+							type="button"
+							onClick={() => {
+								setCancelError(null);
+								setRerunError(null);
+							}}
+							className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 transition-colors"
+							aria-label="Dismiss"
+						>
+							<XCircle className="w-5 h-5" />
+						</button>
+					</div>
+				</div>
+			)}
+
 			{/* Header */}
 			<div className="shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
 				<div className="flex items-start justify-between">
@@ -1675,17 +1733,27 @@ function RunDetailInner() {
 						{isRunning && (
 							<button
 								type="button"
-								onClick={() => cancelMutation.mutate()}
+								onClick={() => {
+									setCancelError(null);
+									cancelMutation.mutate();
+								}}
 								disabled={cancelMutation.isPending}
 								className="btn-danger flex items-center gap-2"
 							>
-								<StopCircle className="w-4 h-4" />
+								{cancelMutation.isPending ? (
+									<Loader2 className="w-4 h-4 animate-spin" />
+								) : (
+									<StopCircle className="w-4 h-4" />
+								)}
 								Cancel
 							</button>
 						)}
 						<button
 							type="button"
-							onClick={() => rerunMutation.mutate()}
+							onClick={() => {
+								setRerunError(null);
+								rerunMutation.mutate();
+							}}
 							disabled={rerunMutation.isPending || isRunning}
 							className="btn-secondary flex items-center gap-2"
 						>
