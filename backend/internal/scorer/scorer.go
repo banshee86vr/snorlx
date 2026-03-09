@@ -38,6 +38,12 @@ func (s *Scorer) ScoreRepository(ctx context.Context, client *gh.Client, owner, 
 	// Fetch all data (gracefully handle 403/404)
 	community, _ := s.ghClient.GetCommunityProfile(ctx, client, owner, repoName)
 	protection, _ := s.ghClient.GetBranchProtection(ctx, client, owner, repoName, savedRepo.DefaultBranch)
+	// If legacy branch protection is not set, check repository rulesets (newer GitHub feature)
+	if protection == nil {
+		if rules, _ := s.ghClient.GetRulesForBranch(ctx, client, owner, repoName, savedRepo.DefaultBranch); rules != nil {
+			protection = protectionFromBranchRules(rules)
+		}
+	}
 	rootContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, "", "")
 	githubContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, ".github", "")
 	dependabotEnabled := s.ghClient.VulnerabilityAlertsEnabled(ctx, client, owner, repoName)
@@ -99,6 +105,41 @@ func (s *Scorer) ScoreRepository(ctx context.Context, client *gh.Client, owner, 
 		CheckResults:       results,
 		ScannedAt:          now,
 	}, nil
+}
+
+// protectionFromBranchRules builds a synthetic Protection from repository rulesets (BranchRules)
+// so that scoring treats ruleset-based branch protection like legacy protection.
+func protectionFromBranchRules(rules *gh.BranchRules) *gh.Protection {
+	if rules == nil {
+		return nil
+	}
+	hasPR := len(rules.PullRequest) > 0
+	hasStatusChecks := len(rules.RequiredStatusChecks) > 0
+	hasNoFF := len(rules.NonFastForward) > 0
+	hasRequiredSig := len(rules.RequiredSignatures) > 0
+	hasLinearHistory := len(rules.RequiredLinearHistory) > 0
+	if !hasPR && !hasStatusChecks && !hasNoFF && !hasRequiredSig && !hasLinearHistory {
+		return nil
+	}
+	p := &gh.Protection{}
+	if hasPR {
+		count := rules.PullRequest[0].Parameters.RequiredApprovingReviewCount
+		if count < 1 {
+			count = 1
+		}
+		p.RequiredPullRequestReviews = &gh.PullRequestReviewsEnforcement{RequiredApprovingReviewCount: count}
+	}
+	if hasStatusChecks {
+		p.RequiredStatusChecks = &gh.RequiredStatusChecks{}
+	}
+	// Rulesets apply to all actors by default (no bypass in BranchRules response); treat as enforce admins.
+	p.EnforceAdmins = &gh.AdminEnforcement{Enabled: true}
+	if hasNoFF {
+		p.AllowForcePushes = &gh.AllowForcePushes{Enabled: false}
+	} else {
+		p.AllowForcePushes = &gh.AllowForcePushes{Enabled: true}
+	}
+	return p
 }
 
 func contentNames(contents []*gh.RepositoryContent) []string {

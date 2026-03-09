@@ -12,6 +12,7 @@ import {
 	GitCommit,
 	User,
 	Zap,
+	Award,
 } from "lucide-react";
 import {
 	AreaChart,
@@ -161,41 +162,9 @@ export function Dashboard() {
 				</p>
 			</div>
 
-			{/* Stats Grid - 4 boxes */}
-			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-				<StatCard
-					title="Workflows"
-					value={summary?.workflows.total || 0}
-					icon={GitBranch}
-					color="primary"
-					subtitle={`${summary?.workflows.active || 0} active`}
-				/>
-				<StatCard
-					title={`Runs (${currentMonth})`}
-					value={summary?.runs.total || 0}
-					icon={Play}
-					color="info"
-					subtitle={`${summary?.runs.success || 0} successful, ${summary?.runs.failed || 0} failed`}
-				/>
-				<StatCard
-					title="Pending Runs"
-					value={(summary?.runs.in_progress || 0) + (summary?.runs.queued || 0)}
-					icon={Clock}
-					color="warning"
-					subtitle={`${summary?.runs.in_progress || 0} in progress, ${summary?.runs.queued || 0} queued`}
-				/>
-				<StatCard
-					title={`Pipeline Time (${currentMonth})`}
-					value={formatTotalTime(totalDuration)}
-					icon={Timer}
-					color="success"
-					subtitle={`${summary?.runs.total || 0} runs completed`}
-				/>
-			</div>
-
-			{/* Repository Health */}
-			{scoresData?.data && scoresData.data.length > 0 && (() => {
-				const scores = scoresData.data;
+			{/* Stats Grid - 5 boxes in one row */}
+			{(() => {
+				const scores = scoresData?.data ?? [];
 				const tierCounts = { gold: 0, silver: 0, bronze: 0 };
 				let totalScore = 0;
 				for (const s of scores) {
@@ -205,59 +174,57 @@ export function Dashboard() {
 					}
 					totalScore += s.overall_score;
 				}
-				const avgScore = totalScore / scores.length;
-				const pieData = [
-					{ name: "Gold", value: tierCounts.gold, color: "#d97706" },
-					{ name: "Silver", value: tierCounts.silver, color: "#64748b" },
-					{ name: "Bronze", value: tierCounts.bronze, color: "#c2410c" },
-				].filter((d) => d.value > 0);
+				const avgScore = scores.length > 0 ? totalScore / scores.length : 0;
+				const repoHealthSubtitle =
+					scores.length > 0 ? (
+						<>
+							<span>{scores.length} repos</span>
+							<div className="flex justify-between gap-1 mt-0.5 text-sm text-gray-500 dark:text-gray-400 min-w-0">
+								<span className="truncate" title="Gold">{tierCounts.gold} gold</span>
+								<span className="truncate text-center" title="Silver">{tierCounts.silver} silver</span>
+								<span className="truncate text-right" title="Bronze">{tierCounts.bronze} bronze</span>
+							</div>
+						</>
+					) : (
+						"Sync to grade repos"
+					);
 				return (
-					<div className="card p-6">
-						<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-							Repository Health
-						</h2>
-						<div className="flex flex-col sm:flex-row items-center gap-6">
-							<div className="flex-1 min-w-0 flex items-center justify-center">
-								{pieData.length > 0 ? (
-									<ResponsiveContainer width="100%" height={200}>
-										<PieChart>
-											<Pie
-												data={pieData}
-												dataKey="value"
-												nameKey="name"
-												cx="50%"
-												cy="50%"
-												outerRadius={80}
-												label={({ name, value }) => `${name}: ${value}`}
-											>
-												{pieData.map((entry, index) => (
-													<Cell key={`cell-${index}`} fill={entry.color} />
-												))}
-											</Pie>
-											<Tooltip
-												contentStyle={{
-													backgroundColor: chartColors.tooltipBg,
-													border: `1px solid ${chartColors.tooltipBorder}`,
-													borderRadius: "8px",
-													color: chartColors.tooltipText,
-												}}
-											/>
-										</PieChart>
-									</ResponsiveContainer>
-								) : (
-									<p className="text-sm text-gray-500 dark:text-gray-400">No tier data</p>
-								)}
-							</div>
-							<div className="flex flex-col gap-2 text-center sm:text-left">
-								<p className="text-sm text-gray-500 dark:text-gray-400">Average score</p>
-								<p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
-									{avgScore.toFixed(0)}%
-								</p>
-								<p className="text-sm text-gray-500 dark:text-gray-400">
-									{scores.length} repo{scores.length !== 1 ? "s" : ""} scored
-								</p>
-							</div>
-						</div>
+					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+						<StatCard
+							title="Workflows"
+							value={summary?.workflows.total || 0}
+							icon={GitBranch}
+							color="primary"
+							subtitle={`${summary?.workflows.active || 0} active`}
+						/>
+						<StatCard
+							title={`Runs (${currentMonth})`}
+							value={summary?.runs.total || 0}
+							icon={Play}
+							color="info"
+							subtitle={`${summary?.runs.success || 0} successful, ${summary?.runs.failed || 0} failed`}
+						/>
+						<StatCard
+							title="Pending Runs"
+							value={(summary?.runs.in_progress || 0) + (summary?.runs.queued || 0)}
+							icon={Clock}
+							color="warning"
+							subtitle={`${summary?.runs.in_progress || 0} in progress, ${summary?.runs.queued || 0} queued`}
+						/>
+						<StatCard
+							title={`Pipeline Time (${currentMonth})`}
+							value={formatTotalTime(totalDuration)}
+							icon={Timer}
+							color="success"
+							subtitle={`${summary?.runs.total || 0} runs completed`}
+						/>
+						<StatCard
+							title="Repository Health"
+							value={scores.length > 0 ? `${Math.round(avgScore)}%` : "—"}
+							icon={Award}
+							color="info"
+							subtitle={repoHealthSubtitle}
+						/>
 					</div>
 				);
 			})()}
@@ -572,7 +539,7 @@ interface StatCardProps {
 	value: number | string;
 	icon: React.ElementType;
 	color: "primary" | "success" | "warning" | "info" | "danger";
-	subtitle?: string;
+	subtitle?: React.ReactNode;
 }
 
 function StatCard({
@@ -604,9 +571,15 @@ function StatCard({
 						{value}
 					</p>
 					{subtitle && (
-						<p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-							{subtitle}
-						</p>
+						typeof subtitle === "string" ? (
+							<p className="text-sm text-gray-500 dark:text-gray-400 mt-1 whitespace-pre-line">
+								{subtitle}
+							</p>
+						) : (
+							<div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+								{subtitle}
+							</div>
+						)
 					)}
 				</div>
 				<div className={cn("p-3 rounded-lg", colorClasses[color])}>

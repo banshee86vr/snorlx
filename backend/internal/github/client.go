@@ -573,10 +573,17 @@ func (c *Client) GetCommunityProfile(ctx context.Context, client *github.Client,
 	return metrics, err
 }
 
-// GetBranchProtection fetches branch protection rules for the default branch.
+// GetBranchProtection fetches legacy branch protection rules for the given branch.
 func (c *Client) GetBranchProtection(ctx context.Context, client *github.Client, owner, repo, branch string) (*github.Protection, error) {
 	protection, _, err := client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
 	return protection, err
+}
+
+// GetRulesForBranch fetches repository rules (rulesets) that apply to the given branch.
+// Use this when legacy branch protection is nil to detect protection configured via rulesets.
+func (c *Client) GetRulesForBranch(ctx context.Context, client *github.Client, owner, repo, branch string) (*github.BranchRules, error) {
+	rules, _, err := client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
+	return rules, err
 }
 
 // ListRepositoryContents lists files in a repository path (empty path = root). Returns directory contents or nil if not a directory.
