@@ -374,12 +374,10 @@ export function RepositoryDetail() {
                     ? 'badge badge-gold'
                     : score.tier === 'silver'
                       ? 'badge badge-silver'
-                      : score.tier === 'bronze'
-                        ? 'badge badge-bronze'
-                        : 'badge badge-none'
+                      : 'badge badge-bronze'
                 }
               >
-                {score.tier}
+                {score.tier === 'none' ? 'bronze' : score.tier}
               </span>
             </div>
             <div className="h-[280px]">

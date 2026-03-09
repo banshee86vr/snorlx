@@ -129,21 +129,20 @@ export function Repositories() {
                 <div className="flex items-center gap-2">
                   {scoreByRepoId.has(repo.id) && (() => {
                     const score = scoreByRepoId.get(repo.id)!;
+                    const tier = score.tier === "none" ? "bronze" : score.tier;
                     const tierClass =
-                      score.tier === "gold"
+                      tier === "gold"
                         ? "badge-gold"
-                        : score.tier === "silver"
+                        : tier === "silver"
                           ? "badge-silver"
-                          : score.tier === "bronze"
-                            ? "badge-bronze"
-                            : "badge-none";
+                          : "badge-bronze";
                     return (
                       <>
                         <span
                           className={`badge ${tierClass}`}
                           title="Repository score tier"
                         >
-                          {score.tier}
+                          {tier}
                         </span>
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {Math.round(score.overall_score)}%

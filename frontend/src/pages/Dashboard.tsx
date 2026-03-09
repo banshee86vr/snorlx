@@ -196,10 +196,13 @@ export function Dashboard() {
 			{/* Repository Health */}
 			{scoresData?.data && scoresData.data.length > 0 && (() => {
 				const scores = scoresData.data;
-				const tierCounts = { gold: 0, silver: 0, bronze: 0, none: 0 };
+				const tierCounts = { gold: 0, silver: 0, bronze: 0 };
 				let totalScore = 0;
 				for (const s of scores) {
-					tierCounts[s.tier as keyof typeof tierCounts]++;
+					const tier = s.tier === "none" ? "bronze" : s.tier;
+					if (tier === "gold" || tier === "silver" || tier === "bronze") {
+						tierCounts[tier]++;
+					}
 					totalScore += s.overall_score;
 				}
 				const avgScore = totalScore / scores.length;
@@ -207,7 +210,6 @@ export function Dashboard() {
 					{ name: "Gold", value: tierCounts.gold, color: "#d97706" },
 					{ name: "Silver", value: tierCounts.silver, color: "#64748b" },
 					{ name: "Bronze", value: tierCounts.bronze, color: "#c2410c" },
-					{ name: "None", value: tierCounts.none, color: "#6b7280" },
 				].filter((d) => d.value > 0);
 				return (
 					<div className="card p-6">
