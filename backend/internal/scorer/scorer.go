@@ -46,32 +46,37 @@ func (s *Scorer) ScoreRepository(ctx context.Context, client *gh.Client, owner, 
 	}
 	rootContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, "", "")
 	githubContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, ".github", "")
+	backendContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, "backend", "")
+	frontendContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, "frontend", "")
+	srcContents, _ := s.ghClient.ListRepositoryContents(ctx, client, owner, repoName, "src", "")
 	dependabotEnabled := s.ghClient.VulnerabilityAlertsEnabled(ctx, client, owner, repoName)
 	codeScanningCfg, _ := s.ghClient.CodeScanningDefaultSetup(ctx, client, owner, repoName)
 
 	rootNames := contentNames(rootContents)
 	githubNames := contentNames(githubContents)
+	// Merge root + common subdirs so we recognize files in backend/, frontend/, src/ (e.g. Dockerfile, tsconfig, test dirs)
+	projectFiles := mergeNames(rootNames, contentNames(backendContents), contentNames(frontendContents), contentNames(srcContents))
 
 	// Security
-	securityPass, securityTotal := scoreSecurity(results, protection, dependabotEnabled, codeScanningCfg, community, rootNames, githubNames)
+	securityPass, securityTotal := scoreSecurity(results, protection, dependabotEnabled, codeScanningCfg, community, projectFiles, githubNames)
 
 	// Testing
-	testingPass, testingTotal := scoreTesting(results, rootNames, githubNames, meta)
+	testingPass, testingTotal := scoreTesting(results, projectFiles, githubNames, meta)
 
 	// CI/CD
 	cicdPass, cicdTotal := scoreCICD(results, protection, meta, githubNames)
 
 	// Documentation
-	docPass, docTotal := scoreDocumentation(results, community, savedRepo.Description, rootNames)
+	docPass, docTotal := scoreDocumentation(results, community, savedRepo.Description, projectFiles)
 
 	// Code quality
-	cqPass, cqTotal := scoreCodeQuality(results, rootNames)
+	cqPass, cqTotal := scoreCodeQuality(results, projectFiles)
 
 	// Maintenance
 	maintPass, maintTotal := scoreMaintenance(results, meta, savedRepo.Description)
 
 	// Community
-	commPass, commTotal := scoreCommunity(results, community, rootNames, githubNames, meta)
+	commPass, commTotal := scoreCommunity(results, community, projectFiles, githubNames, meta)
 
 	// Category scores (0-100)
 	securityScore := percent(securityPass, securityTotal)
@@ -155,6 +160,19 @@ func contentNames(contents []*gh.RepositoryContent) []string {
 	return names
 }
 
+// mergeNames concatenates directory name slices into one (for scanning root + backend + frontend + src).
+func mergeNames(slices ...[]string) []string {
+	var n int
+	for _, s := range slices {
+		n += len(s)
+	}
+	out := make([]string, 0, n)
+	for _, s := range slices {
+		out = append(out, s...)
+	}
+	return out
+}
+
 func percent(pass, total int) float64 {
 	if total == 0 {
 		return 100
@@ -233,7 +251,7 @@ func scoreTesting(results models.JSONMap, root, githubDir []string, meta *RepoMe
 	if hasTestDir {
 		pass++
 	}
-	testConfigs := []string{"jest.config.js", "jest.config.ts", "jest.config.mjs", "pytest.ini", "vitest.config.ts", "vitest.config.js", "karma.conf.js"}
+	testConfigs := []string{"jest.config.js", "jest.config.ts", "jest.config.mjs", "pytest.ini", "vitest.config.ts", "vitest.config.js", "vitest.config.mjs", "karma.conf.js", "go.mod"}
 	hasTestConfig := HasAnyOf(root, testConfigs)
 	set(results, CheckTestConfig, hasTestConfig)
 	if hasTestConfig {
@@ -316,29 +334,31 @@ func scoreDocumentation(results models.JSONMap, community *gh.CommunityHealthMet
 	return pass, total
 }
 
-func scoreCodeQuality(results models.JSONMap, root []string) (pass, total int) {
+func scoreCodeQuality(results models.JSONMap, projectFiles []string) (pass, total int) {
 	total = 5
-	hasLinter := HasFilePrefix(root, ".eslintrc") || HasFilePrefix(root, ".prettierrc") || HasFile(root, ".rubocop.yml")
+	hasLinter := HasFilePrefix(projectFiles, ".eslintrc") || HasFilePrefix(projectFiles, ".prettierrc") ||
+		HasFile(projectFiles, ".rubocop.yml") || HasFile(projectFiles, "eslint.config.js") || HasFile(projectFiles, "eslint.config.mjs") ||
+		HasFile(projectFiles, "biome.json") || HasFile(projectFiles, "biome.jsonc")
 	set(results, CheckLinterConfig, hasLinter)
 	if hasLinter {
 		pass++
 	}
-	editorConfig := HasFile(root, ".editorconfig")
+	editorConfig := HasFile(projectFiles, ".editorconfig")
 	set(results, CheckEditorConfig, editorConfig)
 	if editorConfig {
 		pass++
 	}
-	typeConfig := HasFile(root, "tsconfig.json")
+	typeConfig := HasFile(projectFiles, "tsconfig.json") || HasFile(projectFiles, "tsconfig.node.json")
 	set(results, CheckTypeConfig, typeConfig)
 	if typeConfig {
 		pass++
 	}
-	dockerfile := HasFile(root, "Dockerfile")
+	dockerfile := HasFile(projectFiles, "Dockerfile") || HasFilePrefix(projectFiles, "Dockerfile.")
 	set(results, CheckDockerfile, dockerfile)
 	if dockerfile {
 		pass++
 	}
-	preCommit := HasFile(root, ".pre-commit-config.yaml")
+	preCommit := HasFile(projectFiles, ".pre-commit-config.yaml")
 	set(results, CheckPreCommit, preCommit)
 	if preCommit {
 		pass++
