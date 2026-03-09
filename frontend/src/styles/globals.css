@@ -152,6 +152,22 @@
   @apply badge bg-gray-100 text-gray-800 dark:bg-slate-800 dark:text-slate-300 dark:border dark:border-slate-600/50;
 }
 
+@utility badge-gold {
+  @apply badge bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200 dark:border dark:border-amber-500/60;
+}
+
+@utility badge-silver {
+  @apply badge bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-200 dark:border dark:border-slate-500/50;
+}
+
+@utility badge-bronze {
+  @apply badge bg-orange-100 text-orange-900 dark:bg-orange-900/50 dark:text-orange-200 dark:border dark:border-orange-500/60;
+}
+
+@utility badge-none {
+  @apply badge bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400 dark:border dark:border-slate-600/50;
+}
+
 @utility input {
   @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm
            placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:border-transparent

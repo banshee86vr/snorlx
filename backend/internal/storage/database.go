@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1136,6 +1137,88 @@ func (d *DatabaseStorage) BackfillDeploymentRuns(ctx context.Context) (int, erro
 	return int(result.RowsAffected()), nil
 }
 
+// ===== Repository Scores =====
+
+func (d *DatabaseStorage) UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error) {
+	checkResultsJSON, err := json.Marshal(score.CheckResults)
+	if err != nil {
+		return nil, err
+	}
+	if score.CheckResults == nil {
+		checkResultsJSON = []byte("{}")
+	}
+	err = d.pool.QueryRow(ctx, `
+		INSERT INTO repository_scores (repo_id, overall_score, tier, security_score, testing_score, cicd_score, documentation_score, code_quality_score, maintenance_score, community_score, check_results, scanned_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, created_at
+	`, score.RepoID, score.OverallScore, score.Tier, score.SecurityScore, score.TestingScore, score.CICDScore, score.DocumentationScore, score.CodeQualityScore, score.MaintenanceScore, score.CommunityScore, checkResultsJSON, score.ScannedAt).Scan(&score.ID, &score.CreatedAt)
+	return score, err
+}
+
+func (d *DatabaseStorage) GetLatestRepositoryScore(ctx context.Context, repoID int) (*models.RepositoryScore, error) {
+	var score models.RepositoryScore
+	var checkResultsBytes []byte
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, repo_id, overall_score, tier, security_score, testing_score, cicd_score, documentation_score, code_quality_score, maintenance_score, community_score, check_results, scanned_at, created_at
+		FROM repository_scores
+		WHERE repo_id = $1
+		ORDER BY scanned_at DESC
+		LIMIT 1
+	`, repoID).Scan(
+		&score.ID, &score.RepoID, &score.OverallScore, &score.Tier,
+		&score.SecurityScore, &score.TestingScore, &score.CICDScore,
+		&score.DocumentationScore, &score.CodeQualityScore, &score.MaintenanceScore, &score.CommunityScore,
+		&checkResultsBytes, &score.ScannedAt, &score.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(checkResultsBytes) > 0 {
+		_ = json.Unmarshal(checkResultsBytes, &score.CheckResults)
+	}
+	if score.CheckResults == nil {
+		score.CheckResults = make(models.JSONMap)
+	}
+	return &score, nil
+}
+
+func (d *DatabaseStorage) ListLatestRepositoryScores(ctx context.Context) ([]models.RepositoryScore, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT DISTINCT ON (repo_id) id, repo_id, overall_score, tier, security_score, testing_score, cicd_score, documentation_score, code_quality_score, maintenance_score, community_score, check_results, scanned_at, created_at
+		FROM repository_scores
+		ORDER BY repo_id, scanned_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var scores []models.RepositoryScore
+	for rows.Next() {
+		var score models.RepositoryScore
+		var checkResultsBytes []byte
+		if err := rows.Scan(
+			&score.ID, &score.RepoID, &score.OverallScore, &score.Tier,
+			&score.SecurityScore, &score.TestingScore, &score.CICDScore,
+			&score.DocumentationScore, &score.CodeQualityScore, &score.MaintenanceScore, &score.CommunityScore,
+			&checkResultsBytes, &score.ScannedAt, &score.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if len(checkResultsBytes) > 0 {
+			_ = json.Unmarshal(checkResultsBytes, &score.CheckResults)
+		}
+		if score.CheckResults == nil {
+			score.CheckResults = make(models.JSONMap)
+		}
+		scores = append(scores, score)
+	}
+	return scores, nil
+}
+
 // migrationSQL contains the database schema
 const migrationSQL = `
 -- Enable TimescaleDB extension
@@ -1313,6 +1396,26 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+-- Repository scores table
+CREATE TABLE IF NOT EXISTS repository_scores (
+    id SERIAL PRIMARY KEY,
+    repo_id INTEGER REFERENCES repositories(id) ON DELETE CASCADE,
+    overall_score NUMERIC(5,2) DEFAULT 0,
+    tier VARCHAR(10) DEFAULT 'none',
+    security_score NUMERIC(5,2) DEFAULT 0,
+    testing_score NUMERIC(5,2) DEFAULT 0,
+    cicd_score NUMERIC(5,2) DEFAULT 0,
+    documentation_score NUMERIC(5,2) DEFAULT 0,
+    code_quality_score NUMERIC(5,2) DEFAULT 0,
+    maintenance_score NUMERIC(5,2) DEFAULT 0,
+    community_score NUMERIC(5,2) DEFAULT 0,
+    check_results JSONB DEFAULT '{}',
+    scanned_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_repo_scores_repo_id ON repository_scores(repo_id);
+CREATE INDEX IF NOT EXISTS idx_repo_scores_scanned_at ON repository_scores(scanned_at);
 
 -- Continuous aggregate for daily metrics
 CREATE MATERIALIZED VIEW IF NOT EXISTS daily_workflow_metrics

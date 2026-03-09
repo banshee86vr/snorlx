@@ -215,6 +215,24 @@ type Trend struct {
 	DeploymentCount int       `json:"deployment_count"`
 }
 
+// RepositoryScore represents a repository's grading result
+type RepositoryScore struct {
+	ID                  int       `json:"id"`
+	RepoID              int       `json:"repo_id"`
+	OverallScore        float64   `json:"overall_score"`
+	Tier                string    `json:"tier"` // "gold", "silver", "bronze", "none"
+	SecurityScore       float64   `json:"security_score"`
+	TestingScore        float64   `json:"testing_score"`
+	CICDScore           float64   `json:"cicd_score"`
+	DocumentationScore  float64   `json:"documentation_score"`
+	CodeQualityScore    float64   `json:"code_quality_score"`
+	MaintenanceScore    float64   `json:"maintenance_score"`
+	CommunityScore      float64   `json:"community_score"`
+	CheckResults       JSONMap    `json:"check_results"` // detailed pass/fail per check
+	ScannedAt          time.Time `json:"scanned_at"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 // JSONMap is a type alias for JSON object columns
 type JSONMap map[string]interface{}
 

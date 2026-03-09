@@ -64,6 +64,11 @@ type Storage interface {
 
 	// Backfill
 	BackfillDeploymentRuns(ctx context.Context) (int, error)
+
+	// Repository Scores
+	UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error)
+	GetLatestRepositoryScore(ctx context.Context, repoID int) (*models.RepositoryScore, error)
+	ListLatestRepositoryScores(ctx context.Context) ([]models.RepositoryScore, error)
 }
 
 // StorageMode defines the storage backend type

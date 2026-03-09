@@ -28,6 +28,14 @@ export function Repositories() {
     queryFn: () => repositoriesApi.list(page, searchQuery || undefined, perPage),
   });
 
+  const { data: scoresData } = useQuery({
+    queryKey: ['repositories', 'scores'],
+    queryFn: () => repositoriesApi.listScores(),
+  });
+  const scoreByRepoId = new Map(
+    (scoresData?.data ?? []).map((s) => [s.repo_id, s]),
+  );
+
   const handlePerPageChange = (newPerPage: number) => {
     setPerPage(newPerPage);
     setPage(1);
@@ -113,14 +121,40 @@ export function Repositories() {
                 </p>
               )}
 
-              <div className="mt-4 flex items-center justify-between">
+              <div className="mt-4 flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                   <Workflow className="w-4 h-4" />
                   <span>{repo.workflow_count || 0} workflows</span>
                 </div>
-                <span className="text-xs text-gray-400 dark:text-gray-500">
-                  {repo.default_branch}
-                </span>
+                <div className="flex items-center gap-2">
+                  {scoreByRepoId.has(repo.id) && (() => {
+                    const score = scoreByRepoId.get(repo.id)!;
+                    const tierClass =
+                      score.tier === "gold"
+                        ? "badge-gold"
+                        : score.tier === "silver"
+                          ? "badge-silver"
+                          : score.tier === "bronze"
+                            ? "badge-bronze"
+                            : "badge-none";
+                    return (
+                      <>
+                        <span
+                          className={`badge ${tierClass}`}
+                          title="Repository score tier"
+                        >
+                          {score.tier}
+                        </span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {Math.round(score.overall_score)}%
+                        </span>
+                      </>
+                    );
+                  })()}
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    {repo.default_branch}
+                  </span>
+                </div>
               </div>
             </Link>
           ))

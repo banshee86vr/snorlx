@@ -561,6 +561,49 @@ func (c *Client) GetWorkflowContent(ctx context.Context, client *github.Client, 
 	return []byte(content), nil
 }
 
+// GetRepository fetches a single repository by owner and name.
+func (c *Client) GetRepository(ctx context.Context, client *github.Client, owner, repo string) (*github.Repository, error) {
+	r, _, err := client.Repositories.Get(ctx, owner, repo)
+	return r, err
+}
+
+// GetCommunityProfile fetches the repository community profile (README, LICENSE, etc.).
+func (c *Client) GetCommunityProfile(ctx context.Context, client *github.Client, owner, repo string) (*github.CommunityHealthMetrics, error) {
+	metrics, _, err := client.Repositories.GetCommunityHealthMetrics(ctx, owner, repo)
+	return metrics, err
+}
+
+// GetBranchProtection fetches branch protection rules for the default branch.
+func (c *Client) GetBranchProtection(ctx context.Context, client *github.Client, owner, repo, branch string) (*github.Protection, error) {
+	protection, _, err := client.Repositories.GetBranchProtection(ctx, owner, repo, branch)
+	return protection, err
+}
+
+// ListRepositoryContents lists files in a repository path (empty path = root). Returns directory contents or nil if not a directory.
+func (c *Client) ListRepositoryContents(ctx context.Context, client *github.Client, owner, repo, path string, ref string) ([]*github.RepositoryContent, error) {
+	opts := &github.RepositoryContentGetOptions{}
+	if ref != "" {
+		opts.Ref = ref
+	}
+	_, contents, _, err := client.Repositories.GetContents(ctx, owner, repo, path, opts)
+	return contents, err
+}
+
+// VulnerabilityAlertsEnabled returns true if Dependabot vulnerability alerts are enabled (204). 404/403 returns false.
+func (c *Client) VulnerabilityAlertsEnabled(ctx context.Context, client *github.Client, owner, repo string) bool {
+	enabled, _, err := client.Repositories.GetVulnerabilityAlerts(ctx, owner, repo)
+	return err == nil && enabled
+}
+
+// CodeScanningDefaultSetup returns the default code scanning setup if configured. 404/403 returns nil.
+func (c *Client) CodeScanningDefaultSetup(ctx context.Context, client *github.Client, owner, repo string) (*github.DefaultSetupConfiguration, error) {
+	cfg, _, err := client.CodeScanning.GetDefaultSetupConfiguration(ctx, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
 // ParseWebhookEvent parses a webhook event
 func (c *Client) ParseWebhookEvent(eventType string, payload []byte) (interface{}, error) {
 	switch eventType {

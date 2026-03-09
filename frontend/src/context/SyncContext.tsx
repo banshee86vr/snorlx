@@ -79,6 +79,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           }));
           // Refresh all data
           queryClient.invalidateQueries({ queryKey: ['repositories'] });
+          queryClient.invalidateQueries({ queryKey: ['repositories', 'scores'] });
           queryClient.invalidateQueries({ queryKey: ['workflows'] });
           queryClient.invalidateQueries({ queryKey: ['runs'] });
           queryClient.invalidateQueries({ queryKey: ['dashboard'] });

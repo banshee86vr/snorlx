@@ -2,6 +2,7 @@ import type {
 	User,
 	Organization,
 	Repository,
+	RepositoryScore,
 	Workflow,
 	WorkflowRun,
 	WorkflowJob,
@@ -68,6 +69,10 @@ export const repositoriesApi = {
 			`/api/repositories/${id}/sync`,
 			{ method: "POST" },
 		),
+	getScore: (repoId: number) =>
+		fetchApi<RepositoryScore>(`/api/repositories/${repoId}/score`),
+	listScores: () =>
+		fetchApi<{ data: RepositoryScore[] }>("/api/repositories/scores"),
 };
 
 // Workflows API

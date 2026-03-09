@@ -24,8 +24,9 @@ type MemoryStorage struct {
 	workflowIDCounter int32
 	runIDCounter    int32
 	jobIDCounter    int32
-	deployIDCounter int32
-	userIDCounter   int32
+	deployIDCounter  int32
+	userIDCounter    int32
+	scoreIDCounter   int32
 
 	// Data stores
 	organizations map[int]*models.Organization
@@ -33,9 +34,10 @@ type MemoryStorage struct {
 	workflows     map[int]*models.Workflow
 	runs          map[int]*models.WorkflowRun
 	jobs          map[int]*models.WorkflowJob
-	deployments   map[int]*models.Deployment
-	users         map[int]*models.User
-	sessions      map[string]*models.Session
+	deployments      map[int]*models.Deployment
+	users            map[int]*models.User
+	sessions         map[string]*models.Session
+	repositoryScores map[int]*models.RepositoryScore
 
 	// GitHub ID indexes for fast lookups
 	orgGitHubIndex      map[int64]int
@@ -57,6 +59,7 @@ func NewMemoryStorage() *MemoryStorage {
 		deployments:         make(map[int]*models.Deployment),
 		users:               make(map[int]*models.User),
 		sessions:            make(map[string]*models.Session),
+		repositoryScores:   make(map[int]*models.RepositoryScore),
 		orgGitHubIndex:      make(map[int64]int),
 		repoGitHubIndex:     make(map[int64]int),
 		workflowGitHubIndex: make(map[int64]int),
@@ -1013,5 +1016,58 @@ func (m *MemoryStorage) BackfillDeploymentRuns(ctx context.Context) (int, error)
 		}
 	}
 	return updated, nil
+}
+
+// ===== Repository Scores =====
+
+func (m *MemoryStorage) UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	score.ID = int(atomic.AddInt32(&m.scoreIDCounter, 1))
+	score.CreatedAt = time.Now()
+	if score.CheckResults == nil {
+		score.CheckResults = make(models.JSONMap)
+	}
+	m.repositoryScores[score.ID] = score
+	return score, nil
+}
+
+func (m *MemoryStorage) GetLatestRepositoryScore(ctx context.Context, repoID int) (*models.RepositoryScore, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var latest *models.RepositoryScore
+	for _, s := range m.repositoryScores {
+		if s.RepoID != repoID {
+			continue
+		}
+		if latest == nil || s.ScannedAt.After(latest.ScannedAt) {
+			latest = s
+		}
+	}
+	if latest == nil {
+		return nil, nil
+	}
+	return latest, nil
+}
+
+func (m *MemoryStorage) ListLatestRepositoryScores(ctx context.Context) ([]models.RepositoryScore, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	byRepo := make(map[int]*models.RepositoryScore)
+	for _, s := range m.repositoryScores {
+		existing, ok := byRepo[s.RepoID]
+		if !ok || s.ScannedAt.After(existing.ScannedAt) {
+			byRepo[s.RepoID] = s
+		}
+	}
+	out := make([]models.RepositoryScore, 0, len(byRepo))
+	for _, s := range byRepo {
+		out = append(out, *s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RepoID < out[j].RepoID })
+	return out, nil
 }
 

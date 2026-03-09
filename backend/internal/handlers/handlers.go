@@ -15,6 +15,7 @@ import (
 	"snorlx/backend/internal/config"
 	"snorlx/backend/internal/github"
 	"snorlx/backend/internal/models"
+	"snorlx/backend/internal/scorer"
 	"snorlx/backend/internal/storage"
 	"snorlx/backend/internal/websocket"
 
@@ -41,15 +42,17 @@ type Handler struct {
 	storage  storage.Storage
 	ghClient *github.Client
 	wsHub    *websocket.Hub
+	scorer   *scorer.Scorer
 }
 
 // New creates a new Handler
-func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsHub *websocket.Hub) *Handler {
+func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsHub *websocket.Hub, sc *scorer.Scorer) *Handler {
 	return &Handler{
 		config:   cfg,
 		storage:  store,
 		ghClient: ghClient,
 		wsHub:    wsHub,
+		scorer:   sc,
 	}
 }
 
@@ -413,6 +416,35 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(repo)
 }
 
+// GetRepositoryScore returns the latest score for a repository
+func (h *Handler) GetRepositoryScore(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+
+	score, err := h.storage.GetLatestRepositoryScore(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Failed to get score", http.StatusInternalServerError)
+		return
+	}
+	if score == nil {
+		http.Error(w, "No score found for this repository", http.StatusNotFound)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(score)
+}
+
+// ListRepositoryScores returns the latest score for every repository
+func (h *Handler) ListRepositoryScores(w http.ResponseWriter, r *http.Request) {
+	scores, err := h.storage.ListLatestRepositoryScores(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to list scores", http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": scores,
+	})
+}
+
 // filterRepositories filters repositories based on config settings (SYNC_REPOS and SYNC_LIMIT)
 func (h *Handler) filterRepositories(ghRepos []*gh.Repository) []*gh.Repository {
 	// If specific repos are configured, filter to only those
@@ -611,6 +643,31 @@ func (h *Handler) runSync(ctx context.Context, accessToken string) {
 			}
 			syncedRuns++
 		}
+
+		// Score repository (documentation, security, CI/CD, etc.)
+		if h.scorer != nil {
+			meta := &scorer.RepoMeta{
+				HasWorkflows:  len(ghWorkflows) > 0,
+				WorkflowNames: make([]string, 0, len(ghWorkflows)),
+				Topics:        ghRepo.Topics,
+			}
+			if ghRepo.PushedAt != nil {
+				t := ghRepo.PushedAt.Time
+				meta.PushedAt = &t
+			}
+			meta.Archived = ghRepo.GetArchived()
+			for _, w := range ghWorkflows {
+				meta.WorkflowNames = append(meta.WorkflowNames, w.GetName())
+			}
+			score, err := h.scorer.ScoreRepository(ctx, client, owner, repoName, savedRepo, meta)
+			if err != nil {
+				log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to score repository")
+			} else {
+				if _, err := h.storage.UpsertRepositoryScore(ctx, score); err != nil {
+					log.Error().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to save repository score")
+				}
+			}
+		}
 	}
 
 	log.Info().
@@ -753,11 +810,44 @@ func (h *Handler) SyncRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-score the repository from GitHub (fetch fresh metadata, then run scorer)
+	scoreUpdated := false
+	if h.scorer != nil {
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) == 2 {
+			owner, repoName := parts[0], parts[1]
+			ghRepo, errGh := h.ghClient.GetRepository(r.Context(), client, owner, repoName)
+			if errGh == nil && ghRepo != nil {
+				workflowsList, _ := h.storage.ListWorkflows(r.Context(), &repoID)
+				meta := &scorer.RepoMeta{
+					HasWorkflows:  len(workflowsList) > 0,
+					WorkflowNames: make([]string, 0, len(workflowsList)),
+					Topics:        ghRepo.Topics,
+				}
+				if ghRepo.PushedAt != nil {
+					t := ghRepo.PushedAt.Time
+					meta.PushedAt = &t
+				}
+				meta.Archived = ghRepo.GetArchived()
+				for _, w := range workflowsList {
+					meta.WorkflowNames = append(meta.WorkflowNames, w.Name)
+				}
+				score, errScore := h.scorer.ScoreRepository(r.Context(), client, owner, repoName, repo, meta)
+				if errScore == nil && score != nil {
+					if _, errUpsert := h.storage.UpsertRepositoryScore(r.Context(), score); errUpsert == nil {
+						scoreUpdated = true
+					}
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "ok",
-		"workflows": workflows,
-		"runs":      runs,
+		"status":         "ok",
+		"workflows":      workflows,
+		"runs":           runs,
+		"score_updated":  scoreUpdated,
 	})
 }
 

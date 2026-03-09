@@ -142,6 +142,15 @@ func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
 func (m *mockStorage) ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error) {
 	return nil, nil
 }
+func (m *mockStorage) UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error) {
+	return score, nil
+}
+func (m *mockStorage) GetLatestRepositoryScore(ctx context.Context, repoID int) (*models.RepositoryScore, error) {
+	return nil, nil
+}
+func (m *mockStorage) ListLatestRepositoryScores(ctx context.Context) ([]models.RepositoryScore, error) {
+	return nil, nil
+}
 
 // ===== Test helpers =====
 
@@ -154,7 +163,7 @@ func newTestHandler(store *mockStorage) *Handler {
 	return &Handler{
 		config:  cfg,
 		storage: store,
-		// ghClient and wsHub are nil; only test handlers that don't use them
+		// ghClient, wsHub, scorer are nil; only test handlers that don't use them
 	}
 }
 

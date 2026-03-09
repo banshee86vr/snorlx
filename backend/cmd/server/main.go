@@ -12,6 +12,7 @@ import (
 	"snorlx/backend/internal/config"
 	"snorlx/backend/internal/github"
 	"snorlx/backend/internal/handlers"
+	"snorlx/backend/internal/scorer"
 	"snorlx/backend/internal/storage"
 	"snorlx/backend/internal/websocket"
 
@@ -73,8 +74,9 @@ func main() {
 	wsHub := websocket.NewHub()
 	go wsHub.Run()
 
-	// Initialize handlers
-	h := handlers.New(cfg, store, ghClient, wsHub)
+	// Initialize scorer and handlers
+	sc := scorer.New(ghClient)
+	h := handlers.New(cfg, store, ghClient, wsHub, sc)
 
 	// Setup router
 	r := chi.NewRouter()
@@ -143,7 +145,9 @@ func main() {
 
 			// Repositories
 			r.Get("/repositories", h.ListRepositories)
+			r.Get("/repositories/scores", h.ListRepositoryScores)
 			r.Get("/repositories/{id}", h.GetRepository)
+			r.Get("/repositories/{id}/score", h.GetRepositoryScore)
 			r.Post("/repositories/sync", h.SyncRepositories)
 			r.Post("/repositories/{id}/sync", h.SyncRepository)
 			r.Post("/repositories/backfill-deployment-runs", h.BackfillDeploymentRuns)

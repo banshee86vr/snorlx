@@ -25,7 +25,7 @@ import {
 	Pie,
 	Cell,
 } from "recharts";
-import { dashboardApi, pipelinesApi } from "../services/api";
+import { dashboardApi, pipelinesApi, repositoriesApi } from "../services/api";
 import { cn, formatRelativeTime, formatDuration, truncate } from "../lib/utils";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -61,6 +61,11 @@ export function Dashboard() {
 	const { data: trendsData, isLoading: trendsLoading } = useQuery({
 		queryKey: ["dashboard", "trends"],
 		queryFn: () => dashboardApi.getTrends(30),
+	});
+
+	const { data: scoresData } = useQuery({
+		queryKey: ["repositories", "scores"],
+		queryFn: () => repositoriesApi.listScores(),
 	});
 
 	// Fetch active pipelines (in_progress + queued) — 10s poll from storage; manual refresh fetches from GitHub
@@ -187,6 +192,73 @@ export function Dashboard() {
 					subtitle={`${summary?.runs.total || 0} runs completed`}
 				/>
 			</div>
+
+			{/* Repository Health */}
+			{scoresData?.data && scoresData.data.length > 0 && (() => {
+				const scores = scoresData.data;
+				const tierCounts = { gold: 0, silver: 0, bronze: 0, none: 0 };
+				let totalScore = 0;
+				for (const s of scores) {
+					tierCounts[s.tier as keyof typeof tierCounts]++;
+					totalScore += s.overall_score;
+				}
+				const avgScore = totalScore / scores.length;
+				const pieData = [
+					{ name: "Gold", value: tierCounts.gold, color: "#d97706" },
+					{ name: "Silver", value: tierCounts.silver, color: "#64748b" },
+					{ name: "Bronze", value: tierCounts.bronze, color: "#c2410c" },
+					{ name: "None", value: tierCounts.none, color: "#6b7280" },
+				].filter((d) => d.value > 0);
+				return (
+					<div className="card p-6">
+						<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+							Repository Health
+						</h2>
+						<div className="flex flex-col sm:flex-row items-center gap-6">
+							<div className="flex-1 min-w-0 flex items-center justify-center">
+								{pieData.length > 0 ? (
+									<ResponsiveContainer width="100%" height={200}>
+										<PieChart>
+											<Pie
+												data={pieData}
+												dataKey="value"
+												nameKey="name"
+												cx="50%"
+												cy="50%"
+												outerRadius={80}
+												label={({ name, value }) => `${name}: ${value}`}
+											>
+												{pieData.map((entry, index) => (
+													<Cell key={`cell-${index}`} fill={entry.color} />
+												))}
+											</Pie>
+											<Tooltip
+												contentStyle={{
+													backgroundColor: chartColors.tooltipBg,
+													border: `1px solid ${chartColors.tooltipBorder}`,
+													borderRadius: "8px",
+													color: chartColors.tooltipText,
+												}}
+											/>
+										</PieChart>
+									</ResponsiveContainer>
+								) : (
+									<p className="text-sm text-gray-500 dark:text-gray-400">No tier data</p>
+								)}
+							</div>
+							<div className="flex flex-col gap-2 text-center sm:text-left">
+								<p className="text-sm text-gray-500 dark:text-gray-400">Average score</p>
+								<p className="text-3xl font-bold text-gray-900 dark:text-gray-100">
+									{avgScore.toFixed(0)}%
+								</p>
+								<p className="text-sm text-gray-500 dark:text-gray-400">
+									{scores.length} repo{scores.length !== 1 ? "s" : ""} scored
+								</p>
+							</div>
+						</div>
+					</div>
+				);
+			})()}
 
 			{/* Active Pipelines Grid */}
 			<div>

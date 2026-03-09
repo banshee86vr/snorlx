@@ -29,6 +29,22 @@ export interface Repository {
 	organization?: Organization;
 }
 
+export interface RepositoryScore {
+	id: number;
+	repo_id: number;
+	overall_score: number;
+	tier: "gold" | "silver" | "bronze" | "none";
+	security_score: number;
+	testing_score: number;
+	cicd_score: number;
+	documentation_score: number;
+	code_quality_score: number;
+	maintenance_score: number;
+	community_score: number;
+	check_results: Record<string, boolean>;
+	scanned_at: string;
+}
+
 export interface Workflow {
 	id: number;
 	github_id: number;
