@@ -9,7 +9,6 @@ import { RunDetail } from "./pages/RunDetail";
 import { Repositories } from "./pages/Repositories";
 import { RepositoryDetail } from "./pages/RepositoryDetail";
 import { Settings } from "./pages/Settings";
-import { Metrics } from "./pages/Metrics";
 import { Login } from "./pages/Login";
 import { AuthProvider } from "./context/AuthContext";
 import { SocketProvider } from "./context/SocketContext";
@@ -36,7 +35,6 @@ function App() {
 											<Layout>
 												<Routes>
 													<Route path="/" element={<Dashboard />} />
-													<Route path="/metrics" element={<Metrics />} />
 													<Route path="/workflows" element={<Workflows />} />
 													<Route
 														path="/workflows/:id"

@@ -8,14 +8,12 @@ import {
   ChevronLeft,
   ChevronRight,
   GitBranch,
-  BarChart3,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useSidebar } from '../../context/SidebarContext';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Metrics', href: '/metrics', icon: BarChart3 },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
   { name: 'Runs', href: '/runs', icon: Play },
   { name: 'Repositories', href: '/repositories', icon: FolderGit2 },

@@ -10,7 +10,6 @@ import type {
 	ListResponse,
 	RunFilters,
 	JobDependency,
-	DevOpsMetrics,
 } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -151,12 +150,6 @@ export const dashboardApi = {
 	getSummary: () => fetchApi<DashboardSummary>("/api/dashboard/summary"),
 	getTrends: (days = 30) =>
 		fetchApi<{ trends: Trend[] }>(`/api/dashboard/trends?days=${days}`),
-};
-
-// DevOps / DORA metrics API
-export const metricsApi = {
-	getDevOps: (period: "7d" | "30d" | "90d" = "30d") =>
-		fetchApi<DevOpsMetrics>(`/api/metrics/devops?period=${period}`),
 };
 
 // Convenience export for common operations

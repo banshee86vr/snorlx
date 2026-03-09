@@ -82,7 +82,6 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ['workflows'] });
           queryClient.invalidateQueries({ queryKey: ['runs'] });
           queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-          queryClient.invalidateQueries({ queryKey: ['metrics'] });
           queryClient.invalidateQueries({ queryKey: ['pipelines'] });
           // Reset after 2 seconds
           setTimeout(() => {

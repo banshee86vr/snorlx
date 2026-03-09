@@ -167,15 +167,6 @@ func main() {
 			// Jobs
 			r.Get("/jobs/{id}/logs", h.GetJobLogs)
 
-			// DevOps Metrics
-			r.Route("/metrics", func(r chi.Router) {
-				r.Get("/devops", h.GetDevOpsMetrics)
-				r.Get("/devops/deployment-frequency", h.GetDeploymentFrequency)
-				r.Get("/devops/lead-time", h.GetLeadTime)
-				r.Get("/devops/change-failure-rate", h.GetChangeFailureRate)
-				r.Get("/devops/mttr", h.GetMTTR)
-			})
-
 			// Dashboard
 			r.Get("/dashboard/summary", h.GetDashboardSummary)
 			r.Get("/dashboard/trends", h.GetTrends)

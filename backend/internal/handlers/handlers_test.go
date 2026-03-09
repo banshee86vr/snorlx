@@ -135,9 +135,6 @@ func (m *mockStorage) GetTrends(ctx context.Context, days int) ([]models.Trend, 
 	}
 	return nil, nil
 }
-func (m *mockStorage) GetDevOpsMetrics(ctx context.Context, startDate, endDate time.Time) (*models.DevOpsMetrics, error) {
-	return &models.DevOpsMetrics{}, nil
-}
 
 func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
 	return 0, nil

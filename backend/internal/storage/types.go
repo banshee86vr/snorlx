@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"time"
 
 	"snorlx/backend/internal/models"
 )
@@ -59,10 +58,9 @@ type Storage interface {
 	DeleteSession(ctx context.Context, sessionID string) error
 	CleanExpiredSessions(ctx context.Context) error
 
-	// Dashboard & Metrics
+	// Dashboard
 	GetDashboardSummary(ctx context.Context) (*models.DashboardSummary, error)
 	GetTrends(ctx context.Context, days int) ([]models.Trend, error)
-	GetDevOpsMetrics(ctx context.Context, startDate, endDate time.Time) (*models.DevOpsMetrics, error)
 
 	// Backfill
 	BackfillDeploymentRuns(ctx context.Context) (int, error)

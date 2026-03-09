@@ -1517,58 +1517,6 @@ func (h *Handler) CancelRun(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
 }
 
-// ===== DevOps Metrics Handlers =====
-
-// GetDevOpsMetrics returns all DevOps performance metrics
-func (h *Handler) GetDevOpsMetrics(w http.ResponseWriter, r *http.Request) {
-	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = "30d"
-	}
-
-	days := 30
-	switch period {
-	case "7d":
-		days = 7
-	case "30d":
-		days = 30
-	case "90d":
-		days = 90
-	}
-
-	startDate := time.Now().AddDate(0, 0, -days)
-	endDate := time.Now()
-
-	metrics, err := h.storage.GetDevOpsMetrics(r.Context(), startDate, endDate)
-	if err != nil {
-		http.Error(w, "Failed to fetch DevOps metrics", http.StatusInternalServerError)
-		return
-	}
-
-	metrics.Period = period
-	_ = json.NewEncoder(w).Encode(metrics)
-}
-
-// GetDeploymentFrequency returns deployment frequency metric
-func (h *Handler) GetDeploymentFrequency(w http.ResponseWriter, r *http.Request) {
-	h.GetDevOpsMetrics(w, r)
-}
-
-// GetLeadTime returns lead time metric
-func (h *Handler) GetLeadTime(w http.ResponseWriter, r *http.Request) {
-	h.GetDevOpsMetrics(w, r)
-}
-
-// GetChangeFailureRate returns change failure rate metric
-func (h *Handler) GetChangeFailureRate(w http.ResponseWriter, r *http.Request) {
-	h.GetDevOpsMetrics(w, r)
-}
-
-// GetMTTR returns MTTR metric
-func (h *Handler) GetMTTR(w http.ResponseWriter, r *http.Request) {
-	h.GetDevOpsMetrics(w, r)
-}
-
 // ===== Dashboard Handlers =====
 
 // GetDashboardSummary returns dashboard summary
@@ -1602,7 +1550,7 @@ func (h *Handler) GetTrends(w http.ResponseWriter, r *http.Request) {
 
 // ===== Helper Functions =====
 
-// isDeploymentRun returns true if the workflow run should be counted as a deployment for DORA metrics.
+// isDeploymentRun returns true if the workflow run should be counted as a deployment.
 // It uses heuristics: workflow name or path contains release/deploy/cd, or event is deployment/release.
 func isDeploymentRun(workflowName, workflowPath, event string) bool {
 	lowerEvent := strings.ToLower(event)

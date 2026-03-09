@@ -160,47 +160,6 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// DevOpsMetrics represents DevOps performance metrics
-type DevOpsMetrics struct {
-	DeploymentFrequency DeploymentFrequency `json:"deployment_frequency"`
-	LeadTime            LeadTime            `json:"lead_time"`
-	ChangeFailureRate   ChangeFailureRate   `json:"change_failure_rate"`
-	MTTR                MTTR                `json:"mttr"`
-	Period              string              `json:"period"`
-	StartDate           time.Time           `json:"start_date"`
-	EndDate             time.Time           `json:"end_date"`
-}
-
-// DeploymentFrequency represents the deployment frequency metric
-type DeploymentFrequency struct {
-	TotalDeployments   int     `json:"total_deployments"`
-	DeploymentsPerDay  float64 `json:"deployments_per_day"`
-	DeploymentsPerWeek float64 `json:"deployments_per_week"`
-	Rating             string  `json:"rating"` // elite, high, medium, low
-}
-
-// LeadTime represents the lead time for changes metric
-type LeadTime struct {
-	MedianMinutes int    `json:"median_minutes"`
-	P95Minutes    int    `json:"p95_minutes"`
-	Rating        string `json:"rating"`
-}
-
-// ChangeFailureRate represents the change failure rate metric
-type ChangeFailureRate struct {
-	TotalDeployments  int     `json:"total_deployments"`
-	FailedDeployments int     `json:"failed_deployments"`
-	Rate              float64 `json:"rate"`
-	Rating            string  `json:"rating"`
-}
-
-// MTTR represents mean time to recovery metric
-type MTTR struct {
-	MedianMinutes int    `json:"median_minutes"`
-	P95Minutes    int    `json:"p95_minutes"`
-	Rating        string `json:"rating"`
-}
-
 // DashboardSummary represents the dashboard overview
 type DashboardSummary struct {
 	Repositories     RepositorySummary `json:"repositories"`

@@ -45,7 +45,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 						queryClient.invalidateQueries({ queryKey: ["jobs"] });
 						break;
 					case "deployment":
-						queryClient.invalidateQueries({ queryKey: ["metrics"] });
 						queryClient.invalidateQueries({ queryKey: ["dashboard"] });
 						break;
 					case "sync:start":
