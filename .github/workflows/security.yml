@@ -47,15 +47,9 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
-      - name: Create go.work for CodeQL (monorepo)
-        if: matrix.language == 'go'
-        run: |
-          echo 'go 1.26.1' > go.work
-          echo 'use ./backend' >> go.work
-
       - name: Build Go code (for CodeQL extraction)
         if: matrix.language == 'go'
-        run: go build ./...
+        run: cd backend && go build -o /dev/null ./cmd/server
 
       - name: Set up Node.js (for JS/TS analysis)
         if: matrix.language == 'javascript-typescript'

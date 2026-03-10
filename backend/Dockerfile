@@ -18,8 +18,8 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-s -w" -o server ./cmd/server
 
-# Final stage
-FROM alpine:3.24
+# Final stage (use 3.23 for CI image availability; 3.24 when zlib 1.3.2+ is needed)
+FROM alpine:3.23.3
 
 # Create a non-root user to run the server
 RUN addgroup -S snorlx && adduser -S -G snorlx snorlx
