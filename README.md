@@ -9,9 +9,9 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 ## Features
 
 - **Centralized Visibility**: Single pane of glass for all workflow runs across repositories
-- **DevOps Metrics**: Deployment Frequency, Lead Time, Change Failure Rate, MTTR
+- **Repository Scoring**: Grade repos with gold/silver/bronze tiers across Security, Testing, CI/CD, Documentation, Code Quality, Maintenance, and Community
 - **Real-time Updates**: Live pipeline status via WebSocket
-- **GitHub App Authentication**: Granular permissions, repository-level access
+- **GitHub OAuth**: Sign in with GitHub; no GitHub App setup required
 - **Cost Tracking**: Per-workflow and per-repository cost analysis
 - **Multi-repository Support**: Monitor workflows across multiple repos and organizations
 - **Beautiful UI**: Modern, responsive design with dark/light mode
@@ -70,7 +70,7 @@ Access at: http://localhost:5173
 - Node.js 20+
 - pnpm or npm
 - PostgreSQL 14+ with TimescaleDB (optional - only for database mode)
-- GitHub App (see [Setup Guide](#github-app-setup))
+- GitHub OAuth App (see [Setup Guide](#github-oauth-app-setup))
 
 ## 🚀 Local Development (No Docker Required)
 
@@ -96,7 +96,7 @@ cp env.example .env
 Edit `.env` with your credentials:
 
 ```env
-# Development mode (skip GitHub App validation)
+# Development mode (skip GitHub OAuth validation)
 DEV_MODE=true
 
 # Storage Mode - Use memory for quick start (no database needed)
@@ -244,6 +244,22 @@ docker compose logs -f
 docker compose down
 ```
 
+## Repository Scoring
+
+Repositories are graded with an overall percentage and a tier (gold / silver / bronze) based on checks in seven categories:
+
+| Category       | Weight | Examples |
+| -------------- | ------ | -------- |
+| Security       | 25%    | Branch protection, Dependabot, code scanning |
+| Testing        | 20%    | Test configs, coverage, CI test jobs |
+| CI/CD          | 15%    | Workflows, deployment, status checks |
+| Documentation | 15%    | README, CONTRIBUTING, issue templates |
+| Code Quality   | 10%    | Linters, code owners |
+| Maintenance    | 10%    | Recent activity, description |
+| Community      | 5%     | Community health files |
+
+Sync a repository and use **Refresh grade** on its detail page to compute or update its score. The dashboard summary shows average score across repos.
+
 ## GitHub OAuth App Setup
 
 This project uses GitHub OAuth App for user authentication (simpler than GitHub Apps).
@@ -353,12 +369,15 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 
 - `GET /api/repositories` - List all repositories
 - `GET /api/repositories/:id` - Get repository details
+- `GET /api/repositories/scores` - List latest repository scores (all repos)
+- `GET /api/repositories/:id/score` - Get latest score for a repository
 - `POST /api/repositories/sync` - Trigger repository sync
 
 ### Workflows
 
 - `GET /api/workflows` - List all workflows
 - `GET /api/workflows/:id` - Get workflow details
+- `PATCH /api/workflows/:id` - Update workflow
 - `GET /api/workflows/:id/runs` - Get workflow runs
 
 ### Runs
@@ -376,14 +395,6 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 
 - `GET /api/jobs/:id/logs` - Get job logs
 
-### DevOps Metrics
-
-- `GET /api/metrics/devops` - Get DevOps metrics summary
-- `GET /api/metrics/devops/deployment-frequency` - Deployment frequency
-- `GET /api/metrics/devops/lead-time` - Lead time for changes
-- `GET /api/metrics/devops/change-failure-rate` - Change failure rate
-- `GET /api/metrics/devops/mttr` - Mean time to recovery
-
 ### Dashboard
 
 - `GET /api/dashboard/summary` - Get dashboard summary
@@ -396,17 +407,6 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 ### Webhooks
 
 - `POST /api/webhooks/github` - GitHub webhook receiver
-
-## DevOps Metrics
-
-The dashboard calculates DevOps metrics based on GitHub Actions data:
-
-| Metric                   | Calculation                    | Elite Benchmark |
-| ------------------------ | ------------------------------ | --------------- |
-| **Deployment Frequency** | Production deploys per period  | Multiple/day    |
-| **Lead Time**            | Commit → Production deployment | < 1 hour        |
-| **Change Failure Rate**  | Failed deploys / Total deploys | 0-15%           |
-| **MTTR**                 | Incident → Resolution time     | < 1 hour        |
 
 ## Project Structure
 
@@ -431,6 +431,7 @@ The dashboard calculates DevOps metrics based on GitHub Actions data:
 │   │   ├── github/         # GitHub client
 │   │   ├── handlers/       # HTTP handlers
 │   │   ├── models/         # Data models
+│   │   ├── scorer/         # Repository scoring (gold/silver/bronze)
 │   │   ├── storage/        # Storage layer (memory/database)
 │   │   └── websocket/      # WebSocket hub for real-time updates
 │   └── ...
@@ -442,10 +443,10 @@ The dashboard calculates DevOps metrics based on GitHub Actions data:
 
 ### Common Issues
 
-**Backend won't start: "GITHUB_APP_ID is required"**
+**Backend won't start: GitHub OAuth credentials required**
 
-- Set `DEV_MODE=true` in your `.env` file for development
-- Or provide valid GitHub App credentials
+- Set `DEV_MODE=true` in your `.env` file for local development (skips OAuth)
+- Or provide `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` from a [GitHub OAuth App](#github-oauth-app-setup)
 
 **Database connection errors**
 
