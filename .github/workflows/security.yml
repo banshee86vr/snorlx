@@ -157,6 +157,7 @@ jobs:
           output: trivy-frontend-image.sarif
           severity: CRITICAL,HIGH
           exit-code: "0"
+          ignore-unfixed: true
 
       - name: Upload Trivy frontend image scan results
         if: success()
