@@ -8,7 +8,7 @@ import (
 	"snorlx/backend/internal/github"
 	"snorlx/backend/internal/models"
 
-	gh "github.com/google/go-github/v72/github"
+	gh "github.com/google/go-github/v84/github"
 )
 
 // RepoMeta is optional metadata from the sync loop (from ghRepo) to avoid extra API calls.

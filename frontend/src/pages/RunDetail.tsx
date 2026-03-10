@@ -404,7 +404,7 @@ function RunDetailInner() {
 			refreshFromGitHub().catch(() => {});
 		}, ms);
 		return () => clearInterval(t);
-	}, [run?.status, autoRefresh, refreshInterval, id, refreshFromGitHub]);
+	}, [run, run?.status, autoRefresh, refreshInterval, id, refreshFromGitHub]);
 
 	// Fetch workflow definition to get job dependencies (needs)
 	const { data: workflowDefinition } = useQuery({
