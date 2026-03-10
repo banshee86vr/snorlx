@@ -1,8 +1,8 @@
 # Build stage — use pnpm from repo root (build context must be repo root)
 FROM node:25-alpine AS builder
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# Install pnpm (node:25-alpine does not include corepack; use npm)
+RUN npm install -g pnpm@9
 
 WORKDIR /app
 
