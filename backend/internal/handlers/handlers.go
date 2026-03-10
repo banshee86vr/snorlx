@@ -93,10 +93,12 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	// Clear state cookie
 	http.SetCookie(w, &http.Cookie{
-		Name:   "oauth_state",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "oauth_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
 	})
 
 	// Exchange code for token
@@ -166,10 +168,12 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	// Clear session cookie
 	http.SetCookie(w, &http.Cookie{
-		Name:   "session",
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
+		Name:     "session",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   isSecureRequest(r),
 	})
 
 	w.WriteHeader(http.StatusOK)

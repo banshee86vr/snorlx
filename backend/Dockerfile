@@ -1,5 +1,5 @@
 # Build stage — use the same Go version as go.mod
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26.1-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
     -ldflags="-s -w" -o server ./cmd/server
 
 # Final stage
-FROM alpine:3.23.3
+FROM alpine:3.24
 
 # Create a non-root user to run the server
 RUN addgroup -S snorlx && adduser -S -G snorlx snorlx

@@ -33,6 +33,7 @@ coverage/
 # Go
 *.test
 go.work
+gosec-results.sarif
 
 # Database
 *.db
