@@ -67,7 +67,7 @@ jobs:
         if: matrix.language == 'javascript-typescript'
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: Install dependencies (for JS/TS analysis)
         if: matrix.language == 'javascript-typescript'
@@ -241,7 +241,7 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
