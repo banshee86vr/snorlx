@@ -33,7 +33,8 @@
     "overrides": {
       "rollup": ">=4.59.0",
       "lodash": ">=4.17.23",
-      "@remix-run/router": ">=1.23.2"
+      "@remix-run/router": ">=1.23.2",
+      "@tailwindcss/vite>vite": ">=5.2.0"
     }
   },
   "engines": {
