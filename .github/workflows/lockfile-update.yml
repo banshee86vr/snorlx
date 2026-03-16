@@ -46,11 +46,27 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Commit updated lockfile
+      - name: Push verified commit via GitHub API
         if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.head_ref }}
+          REPO: ${{ github.repository }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          git commit -m "chore: update pnpm-lock.yaml"
-          git push
+          BLOB_SHA=$(base64 -w 0 pnpm-lock.yaml | \
+            jq -Rs '{"content": ., "encoding": "base64"}' | \
+            gh api "repos/$REPO/git/blobs" --method POST --input - --jq '.sha')
+
+          HEAD_SHA=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq '.object.sha')
+          BASE_TREE=$(gh api "repos/$REPO/git/commits/$HEAD_SHA" --jq '.tree.sha')
+
+          TREE_SHA=$(jq -n --arg base "$BASE_TREE" --arg blob "$BLOB_SHA" \
+            '{"base_tree":$base,"tree":[{"path":"pnpm-lock.yaml","mode":"100644","type":"blob","sha":$blob}]}' | \
+            gh api "repos/$REPO/git/trees" --method POST --input - --jq '.sha')
+
+          COMMIT_SHA=$(jq -n --arg tree "$TREE_SHA" --arg parent "$HEAD_SHA" \
+            '{"message":"chore: update pnpm-lock.yaml","tree":$tree,"parents":[$parent]}' | \
+            gh api "repos/$REPO/git/commits" --method POST --input - --jq '.sha')
+
+          jq -n --arg sha "$COMMIT_SHA" '{"sha":$sha}' | \
+            gh api "repos/$REPO/git/refs/heads/$BRANCH" --method PATCH --input -
