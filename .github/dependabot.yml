@@ -10,22 +10,14 @@ updates:
       - "dependencies"
       - "backend"
 
-  # Frontend npm/pnpm dependencies
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    labels:
-      - "dependencies"
-      - "frontend"
-
-  # Root workspace dependencies
+  # npm/pnpm dependencies (root workspace + all packages)
+  # Single entry at "/" so Dependabot discovers the pnpm workspace
+  # and updates the root pnpm-lock.yaml for all packages.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
 

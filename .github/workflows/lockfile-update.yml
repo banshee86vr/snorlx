@@ -1,0 +1,56 @@
+name: Update lockfile
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/package.json"
+
+permissions:
+  contents: write
+
+jobs:
+  update-lockfile:
+    name: Sync pnpm-lock.yaml
+    runs-on: ubuntu-latest
+    if: >-
+      github.actor == 'dependabot[bot]' ||
+      github.actor == 'renovate[bot]'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Update lockfile
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Check for lockfile changes
+        id: diff
+        run: |
+          if git diff --quiet pnpm-lock.yaml; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit updated lockfile
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          git commit -m "chore: update pnpm-lock.yaml"
+          git push
