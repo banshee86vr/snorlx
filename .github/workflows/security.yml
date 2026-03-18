@@ -59,7 +59,7 @@ jobs:
 
       - name: Set up pnpm (for JS/TS analysis)
         if: matrix.language == 'javascript-typescript'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10
 
@@ -234,7 +234,7 @@ jobs:
           node-version: "24"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10
 
