@@ -62,7 +62,7 @@ database:
   # Internal database settings
   image:
     repository: timescale/timescaledb
-    tag: 2.25.2-pg16
+    tag: 2.26.0-pg16
     pullPolicy: IfNotPresent
   storage:
     size: 10Gi
