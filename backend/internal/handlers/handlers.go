@@ -68,7 +68,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	state := generateState()
 
 	// Store state in cookie
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is dynamic for dev/prod flexibility
 		Name:     "oauth_state",
 		Value:    state,
 		Path:     "/",
@@ -92,13 +92,14 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear state cookie
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is dynamic for dev/prod flexibility
 		Name:     "oauth_state",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	// Exchange code for token
@@ -145,7 +146,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set session cookie
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is dynamic for dev/prod flexibility
 		Name:     "session",
 		Value:    sessionID,
 		Path:     "/",
@@ -167,13 +168,14 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear session cookie
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // #nosec G124 -- Secure is dynamic for dev/prod flexibility
 		Name:     "session",
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isSecureRequest(r),
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	w.WriteHeader(http.StatusOK)
