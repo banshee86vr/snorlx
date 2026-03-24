@@ -180,11 +180,12 @@ func main() {
 
 	// Create server
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + cfg.Port,
+		Handler:           r,
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Graceful shutdown

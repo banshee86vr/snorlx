@@ -35,7 +35,7 @@
       "lodash": ">=4.17.23",
       "@remix-run/router": ">=1.23.2",
       "@tailwindcss/vite>vite": ">=5.2.0",
-      "flatted": ">=3.4.0",
+      "flatted": ">=3.4.2",
       "undici": ">=7.24.0"
     }
   },
