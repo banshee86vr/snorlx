@@ -14,7 +14,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.94.5",
     "@types/dagre": "^0.7.54",
-    "@xyflow/react": "^12.10.1",
+    "@xyflow/react": "^12.10.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
