@@ -11,7 +11,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY frontend/package.json frontend/package.json
 
 # Install dependencies (workspace root)
-RUN pnpm install --frozen-lockfile --fix-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Copy frontend source
 COPY frontend frontend
