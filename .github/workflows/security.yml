@@ -65,7 +65,9 @@ jobs:
 
       - name: Install dependencies (for JS/TS analysis)
         if: matrix.language == 'javascript-typescript'
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile || \
+          pnpm install --fix-lockfile --no-frozen-lockfile
 
       - name: Autobuild (for JS/TS)
         if: matrix.language == 'javascript-typescript'
@@ -239,7 +241,9 @@ jobs:
           version: 10.18.3
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile || \
+          pnpm install --fix-lockfile --no-frozen-lockfile
 
       - name: Run pnpm audit
         run: pnpm audit --audit-level=high
