@@ -93,7 +93,7 @@ jobs:
             ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --fix-lockfile
         working-directory: .
 
       - name: Lint
