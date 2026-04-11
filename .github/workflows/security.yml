@@ -69,8 +69,7 @@ jobs:
           pnpm install --frozen-lockfile || {
             echo "Frozen install failed, regenerating lockfile for this CI run..."
             rm -f pnpm-lock.yaml
-            pnpm install --lockfile-only --no-frozen-lockfile
-            pnpm install --frozen-lockfile
+            pnpm install --no-frozen-lockfile
           }
 
       - name: Autobuild (for JS/TS)
@@ -249,8 +248,7 @@ jobs:
           pnpm install --frozen-lockfile || {
             echo "Frozen install failed, regenerating lockfile for this CI run..."
             rm -f pnpm-lock.yaml
-            pnpm install --lockfile-only --no-frozen-lockfile
-            pnpm install --frozen-lockfile
+            pnpm install --no-frozen-lockfile
           }
 
       - name: Run pnpm audit
