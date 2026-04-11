@@ -66,8 +66,12 @@ jobs:
       - name: Install dependencies (for JS/TS analysis)
         if: matrix.language == 'javascript-typescript'
         run: |
-          pnpm install --frozen-lockfile || \
-          pnpm install --fix-lockfile --no-frozen-lockfile
+          pnpm install --frozen-lockfile || {
+            echo "Frozen install failed, regenerating lockfile for this CI run..."
+            rm -f pnpm-lock.yaml
+            pnpm install --lockfile-only --no-frozen-lockfile
+            pnpm install --frozen-lockfile
+          }
 
       - name: Autobuild (for JS/TS)
         if: matrix.language == 'javascript-typescript'
@@ -242,8 +246,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm install --frozen-lockfile || \
-          pnpm install --fix-lockfile --no-frozen-lockfile
+          pnpm install --frozen-lockfile || {
+            echo "Frozen install failed, regenerating lockfile for this CI run..."
+            rm -f pnpm-lock.yaml
+            pnpm install --lockfile-only --no-frozen-lockfile
+            pnpm install --frozen-lockfile
+          }
 
       - name: Run pnpm audit
         run: pnpm audit --audit-level=high
