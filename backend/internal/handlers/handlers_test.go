@@ -11,7 +11,7 @@ import (
 	"snorlx/backend/internal/config"
 	"snorlx/backend/internal/models"
 
-	gh "github.com/google/go-github/v84/github"
+	gh "github.com/google/go-github/v85/github"
 )
 
 // ===== Mock Storage =====
