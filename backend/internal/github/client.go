@@ -14,7 +14,7 @@ import (
 	"snorlx/backend/internal/config"
 	"snorlx/backend/internal/models"
 
-	"github.com/google/go-github/v85/github"
+	"github.com/google/go-github/v88/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 	ghOAuth "golang.org/x/oauth2/github"
@@ -139,7 +139,12 @@ func (c *Client) ExchangeCode(ctx context.Context, code string) (*oauth2.Token, 
 func (c *Client) GetUserClient(ctx context.Context, token *oauth2.Token) *github.Client {
 	ts := c.oauthConfig.TokenSource(ctx, token)
 	tc := oauth2.NewClient(ctx, ts)
-	return github.NewClient(tc)
+	client, err := github.NewClient(github.WithHTTPClient(tc))
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create GitHub API client")
+		return nil
+	}
+	return client
 }
 
 // ValidateWebhookSignature validates the webhook signature.
@@ -582,7 +587,7 @@ func (c *Client) GetBranchProtection(ctx context.Context, client *github.Client,
 // GetRulesForBranch fetches repository rules (rulesets) that apply to the given branch.
 // Use this when legacy branch protection is nil to detect protection configured via rulesets.
 func (c *Client) GetRulesForBranch(ctx context.Context, client *github.Client, owner, repo, branch string) (*github.BranchRules, error) {
-	rules, _, err := client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, nil)
+	rules, _, err := client.Repositories.ListRulesForBranch(ctx, owner, repo, branch, nil)
 	return rules, err
 }
 

@@ -20,7 +20,7 @@ import (
 	"snorlx/backend/internal/websocket"
 
 	"github.com/go-chi/chi/v5"
-	gh "github.com/google/go-github/v85/github"
+	gh "github.com/google/go-github/v88/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 	"gopkg.in/yaml.v3"
