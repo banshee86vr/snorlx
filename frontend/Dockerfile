@@ -1,5 +1,5 @@
 # Build stage — use pnpm from repo root (build context must be repo root)
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 
 RUN npm install -g pnpm@10
 
