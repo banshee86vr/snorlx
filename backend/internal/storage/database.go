@@ -927,13 +927,13 @@ func (d *DatabaseStorage) GetSession(ctx context.Context, sessionID string) (*mo
 	var session models.Session
 
 	err := d.pool.QueryRow(ctx, `
-		SELECT u.id, u.github_id, u.login, u.name, u.email, u.avatar_url,
+		SELECT u.id, u.github_id, u.login, u.name, u.email, u.avatar_url, u.access_token, u.token_expires_at,
 		       s.id, s.user_id, s.expires_at, s.created_at
 		FROM sessions s
 		JOIN users u ON s.user_id = u.id
 		WHERE s.id = $1 AND s.expires_at > NOW()
 	`, sessionID).Scan(
-		&user.ID, &user.GitHubID, &user.Login, &user.Name, &user.Email, &user.AvatarURL,
+		&user.ID, &user.GitHubID, &user.Login, &user.Name, &user.Email, &user.AvatarURL, &user.AccessToken, &user.TokenExpiresAt,
 		&session.ID, &session.UserID, &session.ExpiresAt, &session.CreatedAt,
 	)
 	if err != nil {
