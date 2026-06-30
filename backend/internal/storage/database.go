@@ -730,7 +730,7 @@ func (d *DatabaseStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun
 			event, branch, commit_sha, commit_message, actor_login, actor_avatar,
 			html_url, started_at, completed_at, duration_seconds, commit_timestamp, is_deployment, environment
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-		ON CONFLICT (github_id) DO UPDATE SET
+		ON CONFLICT (github_id, started_at) DO UPDATE SET
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
 			completed_at = EXCLUDED.completed_at,
@@ -799,7 +799,7 @@ func (d *DatabaseStorage) UpsertJob(ctx context.Context, job *models.WorkflowJob
 			github_id, run_id, run_github_id, name, status, conclusion, runner_name, runner_group,
 			labels, steps, started_at, completed_at, duration_seconds
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		ON CONFLICT (github_id) DO UPDATE SET
+		ON CONFLICT (github_id, started_at) DO UPDATE SET
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
 			completed_at = EXCLUDED.completed_at,
@@ -1322,6 +1322,9 @@ SELECT create_hypertable('workflow_runs', 'started_at', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workflow_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_repo_id ON workflow_runs(repo_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_github_id ON workflow_runs(github_id);
+-- Unique index for upsert: on a hypertable the unique columns must include the
+-- partitioning column (started_at). Matches ON CONFLICT (github_id, started_at).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_runs_github_id ON workflow_runs(github_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status, started_at DESC);
 
 -- Workflow jobs table (TimescaleDB hypertable)
@@ -1349,6 +1352,8 @@ SELECT create_hypertable('workflow_jobs', 'started_at', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_workflow_jobs_run_id ON workflow_jobs(run_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workflow_jobs_github_id ON workflow_jobs(github_id);
+-- Unique index for upsert (hypertable: must include partitioning column started_at).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_jobs_github_id ON workflow_jobs(github_id, started_at);
 
 -- Deployments table
 CREATE TABLE IF NOT EXISTS deployments (
