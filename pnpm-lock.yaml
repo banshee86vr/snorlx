@@ -9,7 +9,7 @@ overrides:
   lodash: '>=4.18.0'
   '@remix-run/router': '>=1.23.2'
   flatted: '>=3.4.2'
-  undici: '>=7.28.0 <8.0.0'
+  undici: '>=7.28.0 <9.0.0'
 
 importers:
 
