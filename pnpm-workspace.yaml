@@ -12,6 +12,15 @@ minimumReleaseAgeExclude:
   - '@typescript-eslint/typescript-estree@8.61.0'
   - '@typescript-eslint/utils@8.61.0'
   - '@typescript-eslint/visitor-keys@8.61.0'
+  - '@vitest/coverage-v8@4.1.10'
+  - '@vitest/expect@4.1.10'
+  - '@vitest/mocker@4.1.10'
+  - '@vitest/pretty-format@4.1.10'
+  - '@vitest/runner@4.1.10'
+  - '@vitest/snapshot@4.1.10'
+  - '@vitest/spy@4.1.10'
+  - '@vitest/utils@4.1.10'
+  - vitest@4.1.10
 
 onlyBuiltDependencies:
   - esbuild
@@ -21,4 +30,4 @@ overrides:
   lodash: '>=4.18.0'
   '@remix-run/router': '>=1.23.2'
   flatted: '>=3.4.2'
-  undici: '>=7.24.0 <9.0.0'
+  undici: '>=7.28.0 <8.0.0'
