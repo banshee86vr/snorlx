@@ -13,7 +13,7 @@ import (
 
 	"snorlx/backend/internal/config"
 
-	ghLib "github.com/google/go-github/v88/github"
+	ghLib "github.com/google/go-github/v89/github"
 )
 
 func newTestClient(webhookSecret string) *Client {
