@@ -12,6 +12,8 @@ minimumReleaseAgeExclude:
   - '@vitest/spy@4.1.10'
   - '@vitest/utils@4.1.10'
   - vitest@4.1.10
+  - '@testing-library/jest-dom@7.0.0'
+  - recharts@3.10.0
 
 onlyBuiltDependencies:
   - esbuild
