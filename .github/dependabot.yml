@@ -9,6 +9,9 @@ updates:
     labels:
       - "dependencies"
       - "backend"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
 
   # npm/pnpm dependencies (root workspace + all packages)
   # Single entry at "/" so Dependabot discovers the pnpm workspace
@@ -20,6 +23,9 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
 
   # Docker base images
   - package-ecosystem: "docker"
@@ -29,6 +35,9 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
 
   - package-ecosystem: "docker"
     directory: "/frontend"
@@ -37,3 +46,6 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
