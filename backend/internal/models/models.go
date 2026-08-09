@@ -160,6 +160,20 @@ type Session struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ApiToken is a user-minted personal access token for MCP / API clients.
+// TokenHash is never serialized; plaintext is only returned once on create.
+type ApiToken struct {
+	ID          int        `json:"id"`
+	UserID      int        `json:"user_id"`
+	Name        string     `json:"name"`
+	TokenPrefix string     `json:"token_prefix"`
+	TokenHash   string     `json:"-"`
+	Scopes      []string   `json:"scopes"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+}
+
 // DashboardSummary represents the dashboard overview
 type DashboardSummary struct {
 	Repositories     RepositorySummary `json:"repositories"`

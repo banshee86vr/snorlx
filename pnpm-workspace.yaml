@@ -1,5 +1,9 @@
 packages:
   - 'frontend'
+  - 'mcp'
+
+allowBuilds:
+  esbuild: set this to true or false
 
 minimumReleaseAgeExclude:
   - '@typescript-eslint/*'

@@ -21,7 +21,10 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:build": "docker compose build",
-    "docker:logs": "docker compose logs -f"
+    "docker:logs": "docker compose logs -f",
+    "mcp:build": "node mcp/node_modules/typescript/bin/tsc -p mcp",
+    "mcp": "node mcp/dist/index.js",
+    "mcp:http": "node mcp/dist/index.js --http"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"

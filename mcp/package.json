@@ -1,0 +1,28 @@
+{
+  "name": "snorlx-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server for the Snorlx CI/CD dashboard API",
+  "bin": {
+    "snorlx-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0",
+    "express": "^5.2.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.15.30",
+    "typescript": "^5.9.3"
+  }
+}

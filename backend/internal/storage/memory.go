@@ -27,6 +27,7 @@ type MemoryStorage struct {
 	deployIDCounter  int32
 	userIDCounter    int32
 	scoreIDCounter   int32
+	apiTokenIDCounter int32
 
 	// Data stores
 	organizations map[int]*models.Organization
@@ -38,6 +39,8 @@ type MemoryStorage struct {
 	users            map[int]*models.User
 	sessions         map[string]*models.Session
 	repositoryScores map[int]*models.RepositoryScore
+	apiTokens        map[int]*models.ApiToken
+	apiTokenHashIndex map[string]int
 
 	// GitHub ID indexes for fast lookups
 	orgGitHubIndex      map[int64]int
@@ -59,7 +62,9 @@ func NewMemoryStorage() *MemoryStorage {
 		deployments:         make(map[int]*models.Deployment),
 		users:               make(map[int]*models.User),
 		sessions:            make(map[string]*models.Session),
-		repositoryScores:   make(map[int]*models.RepositoryScore),
+		repositoryScores:    make(map[int]*models.RepositoryScore),
+		apiTokens:           make(map[int]*models.ApiToken),
+		apiTokenHashIndex:   make(map[string]int),
 		orgGitHubIndex:      make(map[int64]int),
 		repoGitHubIndex:     make(map[int64]int),
 		workflowGitHubIndex: make(map[int64]int),
@@ -703,6 +708,17 @@ func (m *MemoryStorage) UpsertDeployment(ctx context.Context, deployment *models
 
 // ===== Users & Sessions =====
 
+func (m *MemoryStorage) GetUserByID(ctx context.Context, id int) (*models.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	user, ok := m.users[id]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	return user, nil
+}
+
 func (m *MemoryStorage) GetUserByGitHubID(ctx context.Context, githubID int64) (*models.User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -791,6 +807,101 @@ func (m *MemoryStorage) CleanExpiredSessions(ctx context.Context) error {
 			delete(m.sessions, id)
 		}
 	}
+	return nil
+}
+
+// ===== API Tokens =====
+
+func (m *MemoryStorage) CreateApiToken(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.users[token.UserID]; !ok {
+		return nil, errors.New("user not found")
+	}
+	if _, exists := m.apiTokenHashIndex[token.TokenHash]; exists {
+		return nil, errors.New("token hash already exists")
+	}
+
+	token.ID = int(atomic.AddInt32(&m.apiTokenIDCounter, 1))
+	token.CreatedAt = time.Now()
+	copyToken := *token
+	if token.Scopes != nil {
+		copyToken.Scopes = append([]string{}, token.Scopes...)
+	}
+	m.apiTokens[copyToken.ID] = &copyToken
+	m.apiTokenHashIndex[copyToken.TokenHash] = copyToken.ID
+	return &copyToken, nil
+}
+
+func (m *MemoryStorage) ListApiTokens(ctx context.Context, userID int) ([]models.ApiToken, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]models.ApiToken, 0)
+	for _, t := range m.apiTokens {
+		if t.UserID != userID || t.RevokedAt != nil {
+			continue
+		}
+		copyToken := *t
+		if t.Scopes != nil {
+			copyToken.Scopes = append([]string{}, t.Scopes...)
+		}
+		out = append(out, copyToken)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (m *MemoryStorage) GetApiTokenByHash(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	id, ok := m.apiTokenHashIndex[tokenHash]
+	if !ok {
+		return nil, nil, errors.New("token not found")
+	}
+	token := m.apiTokens[id]
+	if token == nil || token.RevokedAt != nil {
+		return nil, nil, errors.New("token not found")
+	}
+	user, ok := m.users[token.UserID]
+	if !ok {
+		return nil, nil, errors.New("user not found")
+	}
+	copyToken := *token
+	if token.Scopes != nil {
+		copyToken.Scopes = append([]string{}, token.Scopes...)
+	}
+	return &copyToken, user, nil
+}
+
+func (m *MemoryStorage) RevokeApiToken(ctx context.Context, userID, tokenID int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	token, ok := m.apiTokens[tokenID]
+	if !ok || token.UserID != userID || token.RevokedAt != nil {
+		return errors.New("token not found")
+	}
+	now := time.Now()
+	token.RevokedAt = &now
+	delete(m.apiTokenHashIndex, token.TokenHash)
+	return nil
+}
+
+func (m *MemoryStorage) TouchApiTokenLastUsed(ctx context.Context, tokenID int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	token, ok := m.apiTokens[tokenID]
+	if !ok {
+		return errors.New("token not found")
+	}
+	now := time.Now()
+	token.LastUsedAt = &now
 	return nil
 }
 

@@ -51,12 +51,20 @@ type Storage interface {
 	UpsertDeployment(ctx context.Context, deployment *models.Deployment) (*models.Deployment, error)
 
 	// Users & Sessions
+	GetUserByID(ctx context.Context, id int) (*models.User, error)
 	GetUserByGitHubID(ctx context.Context, githubID int64) (*models.User, error)
 	UpsertUser(ctx context.Context, user *models.User) (*models.User, error)
 	CreateSession(ctx context.Context, session *models.Session) error
 	GetSession(ctx context.Context, sessionID string) (*models.Session, *models.User, error)
 	DeleteSession(ctx context.Context, sessionID string) error
 	CleanExpiredSessions(ctx context.Context) error
+
+	// API tokens (MCP / personal access)
+	CreateApiToken(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error)
+	ListApiTokens(ctx context.Context, userID int) ([]models.ApiToken, error)
+	GetApiTokenByHash(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error)
+	RevokeApiToken(ctx context.Context, userID, tokenID int) error
+	TouchApiTokenLastUsed(ctx context.Context, tokenID int) error
 
 	// Dashboard
 	GetDashboardSummary(ctx context.Context) (*models.DashboardSummary, error)

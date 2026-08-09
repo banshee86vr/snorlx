@@ -20,6 +20,12 @@ Please do not open public issues for security vulnerabilities.
 
 We will acknowledge your report and work on a fix. We appreciate your help in keeping this project secure.
 
+## Operator notes
+
+- **Session CSRF**: Cookie-session mutating requests check the `Origin` header against `FRONTEND_URL`. Empty Origin is allowed for same-origin / CLI clients.
+- **Personal API tokens**: Mint under Settings for MCP/automation. Tokens are stored as SHA-256 hashes and returned in plaintext only once. Validated `Authorization: Bearer snorlx_…` authenticates API clients and skips Origin CSRF checks; invalid Bearer tokens do not bypass CSRF or fall through to session auth. Prefer read-only scopes when write is not needed; revoke leaked tokens immediately.
+- **MCP**: Use a user-minted API token in `SNORLX_API_TOKEN`. For Streamable HTTP, require `MCP_HTTP_TOKEN` on `/mcp` and keep `MCP_HOST=127.0.0.1` unless a reverse proxy provides auth. Never put OAuth client secrets or stored GitHub user tokens into MCP configuration. See [docs/mcp.md](docs/mcp.md).
+
 ## Resources
 
 - [GitHub Security Policy](https://docs.github.com/en/code-security/security-policy)

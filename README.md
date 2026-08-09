@@ -509,6 +509,10 @@ This application follows the [12-Factor methodology](https://12factor.net/):
 11. **Logs**: JSON to stdout, collected by platform
 12. **Admin processes**: Migrations as part of startup
 
+## MCP
+
+Snorlx exposes a Model Context Protocol server for agents (Cursor, etc.). Create a personal API token under **Settings → API tokens**, then see [docs/mcp.md](docs/mcp.md) for stdio and Streamable HTTP setup.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.

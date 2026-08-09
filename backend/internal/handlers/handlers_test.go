@@ -3,25 +3,32 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"snorlx/backend/internal/config"
 	"snorlx/backend/internal/models"
 
+	"github.com/go-chi/chi/v5"
 	gh "github.com/google/go-github/v90/github"
 )
 
 // ===== Mock Storage =====
 
 type mockStorage struct {
-	getSessionFunc func(ctx context.Context, sessionID string) (*models.Session, *models.User, error)
-	deleteSessionFunc func(ctx context.Context, sessionID string) error
-	listOrgsFunc      func(ctx context.Context) ([]models.Organization, error)
-	getDashboardFunc  func(ctx context.Context) (*models.DashboardSummary, error)
-	getTrendsFunc     func(ctx context.Context, days int) ([]models.Trend, error)
+	getSessionFunc        func(ctx context.Context, sessionID string) (*models.Session, *models.User, error)
+	deleteSessionFunc     func(ctx context.Context, sessionID string) error
+	listOrgsFunc          func(ctx context.Context) ([]models.Organization, error)
+	getDashboardFunc      func(ctx context.Context) (*models.DashboardSummary, error)
+	getTrendsFunc         func(ctx context.Context, days int) ([]models.Trend, error)
+	getApiTokenByHashFunc func(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error)
+	createApiTokenFunc    func(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error)
+	listApiTokensFunc     func(ctx context.Context, userID int) ([]models.ApiToken, error)
+	revokeApiTokenFunc    func(ctx context.Context, userID, tokenID int) error
 }
 
 func (m *mockStorage) Close() error { return nil }
@@ -101,6 +108,9 @@ func (m *mockStorage) GetDeployment(ctx context.Context, id int) (*models.Deploy
 func (m *mockStorage) UpsertDeployment(ctx context.Context, deployment *models.Deployment) (*models.Deployment, error) {
 	return deployment, nil
 }
+func (m *mockStorage) GetUserByID(ctx context.Context, id int) (*models.User, error) {
+	return nil, nil
+}
 func (m *mockStorage) GetUserByGitHubID(ctx context.Context, githubID int64) (*models.User, error) {
 	return nil, nil
 }
@@ -123,6 +133,35 @@ func (m *mockStorage) DeleteSession(ctx context.Context, sessionID string) error
 	return nil
 }
 func (m *mockStorage) CleanExpiredSessions(ctx context.Context) error { return nil }
+func (m *mockStorage) CreateApiToken(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error) {
+	if m.createApiTokenFunc != nil {
+		return m.createApiTokenFunc(ctx, token)
+	}
+	token.ID = 1
+	token.CreatedAt = time.Now()
+	return token, nil
+}
+func (m *mockStorage) ListApiTokens(ctx context.Context, userID int) ([]models.ApiToken, error) {
+	if m.listApiTokensFunc != nil {
+		return m.listApiTokensFunc(ctx, userID)
+	}
+	return nil, nil
+}
+func (m *mockStorage) GetApiTokenByHash(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error) {
+	if m.getApiTokenByHashFunc != nil {
+		return m.getApiTokenByHashFunc(ctx, tokenHash)
+	}
+	return nil, nil, nil
+}
+func (m *mockStorage) RevokeApiToken(ctx context.Context, userID, tokenID int) error {
+	if m.revokeApiTokenFunc != nil {
+		return m.revokeApiTokenFunc(ctx, userID, tokenID)
+	}
+	return nil
+}
+func (m *mockStorage) TouchApiTokenLastUsed(ctx context.Context, tokenID int) error {
+	return nil
+}
 func (m *mockStorage) GetDashboardSummary(ctx context.Context) (*models.DashboardSummary, error) {
 	if m.getDashboardFunc != nil {
 		return m.getDashboardFunc(ctx)
@@ -341,6 +380,9 @@ func TestAuthMiddleware_ValidSession_CallsNext(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
+		if IsBearerAuth(r.Context()) {
+			t.Error("session auth should not be marked as bearer")
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -352,6 +394,162 @@ func TestAuthMiddleware_ValidSession_CallsNext(t *testing.T) {
 
 	if !called {
 		t.Error("expected next handler to be called for valid session")
+	}
+}
+
+func TestAuthMiddleware_ValidBearer_CallsNext(t *testing.T) {
+	user := &models.User{ID: 7, Login: "tokenuser"}
+	plaintext := "snorlx_" + strings.Repeat("a", 64)
+	hash := hashApiToken(plaintext)
+
+	store := &mockStorage{
+		getApiTokenByHashFunc: func(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error) {
+			if tokenHash != hash {
+				return nil, nil, errors.New("token not found")
+			}
+			return &models.ApiToken{ID: 1, UserID: user.ID, Scopes: []string{"read", "write"}}, user, nil
+		},
+	}
+	h := newTestHandler(store)
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if !IsBearerAuth(r.Context()) {
+			t.Error("expected bearer auth method")
+		}
+		if got := h.getUserFromContext(r.Context()); got == nil || got.Login != "tokenuser" {
+			t.Errorf("unexpected user in context: %#v", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	rec := httptest.NewRecorder()
+
+	h.AuthMiddleware(next).ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatalf("expected next handler; status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthMiddleware_InvalidSnorlxBearer_RejectsEvenWithSession(t *testing.T) {
+	user := &models.User{ID: 1, Login: "octocat"}
+	session := &models.Session{ID: "sess", UserID: 1, ExpiresAt: time.Now().Add(time.Hour)}
+	store := &mockStorage{
+		getSessionFunc: func(ctx context.Context, sessionID string) (*models.Session, *models.User, error) {
+			return session, user, nil
+		},
+		getApiTokenByHashFunc: func(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error) {
+			return nil, nil, errors.New("token not found")
+		},
+	}
+	h := newTestHandler(store)
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
+	req.Header.Set("Authorization", "Bearer snorlx_"+strings.Repeat("b", 64))
+	req.AddCookie(&http.Cookie{Name: "session", Value: "sess"})
+	rec := httptest.NewRecorder()
+
+	h.AuthMiddleware(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+	if called {
+		t.Error("next should not run for invalid snorlx_ bearer")
+	}
+}
+
+func TestRequireWriteScope_ReadOnlyBearer_Forbidden(t *testing.T) {
+	h := newTestHandler(&mockStorage{})
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/1/cancel", nil)
+	ctx := context.WithValue(req.Context(), scopesContextKey, []string{"read"})
+	ctx = context.WithValue(ctx, authMethodContextKey, authMethodBearer)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.RequireWriteScope(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
+	}
+	if called {
+		t.Error("next should not run without write scope")
+	}
+}
+
+func TestCreateAndListAndRevokeApiToken(t *testing.T) {
+	user := &models.User{ID: 3, Login: "alice"}
+	var stored *models.ApiToken
+	store := &mockStorage{
+		createApiTokenFunc: func(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error) {
+			token.ID = 9
+			token.CreatedAt = time.Now()
+			stored = token
+			return token, nil
+		},
+		listApiTokensFunc: func(ctx context.Context, userID int) ([]models.ApiToken, error) {
+			if stored == nil || userID != user.ID {
+				return nil, nil
+			}
+			return []models.ApiToken{*stored}, nil
+		},
+		revokeApiTokenFunc: func(ctx context.Context, userID, tokenID int) error {
+			if userID != user.ID || tokenID != 9 {
+				return errors.New("token not found")
+			}
+			stored = nil
+			return nil
+		},
+	}
+	h := newTestHandler(store)
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/tokens", strings.NewReader(`{"name":"cursor","scopes":["read"]}`))
+	createReq = createReq.WithContext(context.WithValue(createReq.Context(), userContextKey, user))
+	createRec := httptest.NewRecorder()
+	h.CreateApiToken(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("create expected 200, got %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created map[string]interface{}
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created["token"] == nil || created["token"] == "" {
+		t.Fatal("expected plaintext token once")
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	listReq = listReq.WithContext(context.WithValue(listReq.Context(), userContextKey, user))
+	listRec := httptest.NewRecorder()
+	h.ListApiTokens(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list expected 200, got %d", listRec.Code)
+	}
+
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/tokens/9", nil)
+	revokeReq = revokeReq.WithContext(context.WithValue(revokeReq.Context(), userContextKey, user))
+	// chi URL param
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "9")
+	revokeReq = revokeReq.WithContext(context.WithValue(revokeReq.Context(), chi.RouteCtxKey, rctx))
+	revokeRec := httptest.NewRecorder()
+	h.RevokeApiToken(revokeRec, revokeReq)
+	if revokeRec.Code != http.StatusNoContent {
+		t.Fatalf("revoke expected 204, got %d body=%s", revokeRec.Code, revokeRec.Body.String())
 	}
 }
 

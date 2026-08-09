@@ -11,6 +11,8 @@ import type {
 	ListResponse,
 	RunFilters,
 	JobDependency,
+	ApiToken,
+	CreatedApiToken,
 } from "../types";
 
 const API_URL = import.meta.env.VITE_API_URL || "";
@@ -33,7 +35,15 @@ async function fetchApi<T>(
 		throw new Error(error || `HTTP error ${response.status}`);
 	}
 
-	return response.json();
+	if (response.status === 204) {
+		return undefined as T;
+	}
+
+	const text = await response.text();
+	if (!text) {
+		return undefined as T;
+	}
+	return JSON.parse(text) as T;
 }
 
 // Auth API
@@ -155,6 +165,18 @@ export const dashboardApi = {
 	getSummary: () => fetchApi<DashboardSummary>("/api/dashboard/summary"),
 	getTrends: (days = 30) =>
 		fetchApi<{ trends: Trend[] }>(`/api/dashboard/trends?days=${days}`),
+};
+
+// Personal API tokens (MCP / automation)
+export const tokensApi = {
+	list: () => fetchApi<{ data: ApiToken[] }>("/api/tokens"),
+	create: (name: string, scopes: string[] = ["read", "write"]) =>
+		fetchApi<CreatedApiToken>("/api/tokens", {
+			method: "POST",
+			body: JSON.stringify({ name, scopes }),
+		}),
+	revoke: (id: number) =>
+		fetchApi<void>(`/api/tokens/${id}`, { method: "DELETE" }),
 };
 
 // Convenience export for common operations

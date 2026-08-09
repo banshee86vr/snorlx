@@ -6,6 +6,21 @@ export interface User {
 	avatar_url: string | null;
 }
 
+export interface ApiToken {
+	id: number;
+	user_id: number;
+	name: string;
+	token_prefix: string;
+	scopes: string[];
+	created_at: string;
+	last_used_at?: string | null;
+	revoked_at?: string | null;
+}
+
+export interface CreatedApiToken extends ApiToken {
+	token: string;
+}
+
 export interface Organization {
 	id: number;
 	github_id: number;

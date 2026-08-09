@@ -880,6 +880,21 @@ func (d *DatabaseStorage) UpsertDeployment(ctx context.Context, deployment *mode
 
 // ===== Users & Sessions =====
 
+func (d *DatabaseStorage) GetUserByID(ctx context.Context, id int) (*models.User, error) {
+	var user models.User
+	err := d.pool.QueryRow(ctx, `
+		SELECT id, github_id, login, name, email, avatar_url, access_token, refresh_token, token_expires_at, created_at, updated_at
+		FROM users WHERE id = $1
+	`, id).Scan(
+		&user.ID, &user.GitHubID, &user.Login, &user.Name, &user.Email, &user.AvatarURL,
+		&user.AccessToken, &user.RefreshToken, &user.TokenExpiresAt, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+	return &user, nil
+}
+
 func (d *DatabaseStorage) GetUserByGitHubID(ctx context.Context, githubID int64) (*models.User, error) {
 	var user models.User
 	err := d.pool.QueryRow(ctx, `
@@ -950,6 +965,89 @@ func (d *DatabaseStorage) DeleteSession(ctx context.Context, sessionID string) e
 
 func (d *DatabaseStorage) CleanExpiredSessions(ctx context.Context) error {
 	_, err := d.pool.Exec(ctx, "DELETE FROM sessions WHERE expires_at < NOW()")
+	return err
+}
+
+// ===== API Tokens =====
+
+func (d *DatabaseStorage) CreateApiToken(ctx context.Context, token *models.ApiToken) (*models.ApiToken, error) {
+	scopesJSON, err := json.Marshal(token.Scopes)
+	if err != nil {
+		return nil, err
+	}
+	err = d.pool.QueryRow(ctx, `
+		INSERT INTO api_tokens (user_id, name, token_prefix, token_hash, scopes, created_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())
+		RETURNING id, created_at
+	`, token.UserID, token.Name, token.TokenPrefix, token.TokenHash, scopesJSON).Scan(&token.ID, &token.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+func (d *DatabaseStorage) ListApiTokens(ctx context.Context, userID int) ([]models.ApiToken, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, user_id, name, token_prefix, scopes, created_at, last_used_at, revoked_at
+		FROM api_tokens
+		WHERE user_id = $1 AND revoked_at IS NULL
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tokens := make([]models.ApiToken, 0)
+	for rows.Next() {
+		var t models.ApiToken
+		var scopesJSON []byte
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenPrefix, &scopesJSON, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(scopesJSON, &t.Scopes)
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+func (d *DatabaseStorage) GetApiTokenByHash(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error) {
+	var t models.ApiToken
+	var user models.User
+	var scopesJSON []byte
+	err := d.pool.QueryRow(ctx, `
+		SELECT t.id, t.user_id, t.name, t.token_prefix, t.token_hash, t.scopes, t.created_at, t.last_used_at, t.revoked_at,
+		       u.id, u.github_id, u.login, u.name, u.email, u.avatar_url, u.access_token, u.refresh_token, u.token_expires_at, u.created_at, u.updated_at
+		FROM api_tokens t
+		JOIN users u ON u.id = t.user_id
+		WHERE t.token_hash = $1 AND t.revoked_at IS NULL
+	`, tokenHash).Scan(
+		&t.ID, &t.UserID, &t.Name, &t.TokenPrefix, &t.TokenHash, &scopesJSON, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt,
+		&user.ID, &user.GitHubID, &user.Login, &user.Name, &user.Email, &user.AvatarURL, &user.AccessToken, &user.RefreshToken, &user.TokenExpiresAt, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, nil, errors.New("token not found")
+	}
+	_ = json.Unmarshal(scopesJSON, &t.Scopes)
+	return &t, &user, nil
+}
+
+func (d *DatabaseStorage) RevokeApiToken(ctx context.Context, userID, tokenID int) error {
+	tag, err := d.pool.Exec(ctx, `
+		UPDATE api_tokens SET revoked_at = NOW()
+		WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+	`, tokenID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("token not found")
+	}
+	return nil
+}
+
+func (d *DatabaseStorage) TouchApiTokenLastUsed(ctx context.Context, tokenID int) error {
+	_, err := d.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = NOW() WHERE id = $1`, tokenID)
 	return err
 }
 
@@ -1401,6 +1499,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
+-- Personal API tokens (MCP / automation)
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    token_prefix VARCHAR(32) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    scopes JSONB NOT NULL DEFAULT '["read","write"]',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 
 -- Repository scores table
 CREATE TABLE IF NOT EXISTS repository_scores (

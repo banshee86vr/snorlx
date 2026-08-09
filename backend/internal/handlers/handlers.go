@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -60,6 +61,19 @@ func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsH
 type contextKey string
 
 const userContextKey contextKey = "user"
+const scopesContextKey contextKey = "scopes"
+const authMethodContextKey contextKey = "auth_method"
+
+const authMethodBearer = "bearer"
+const authMethodSession = "session"
+
+var defaultScopes = []string{"read", "write"}
+
+// IsBearerAuth reports whether the request was authenticated with a validated API token.
+func IsBearerAuth(ctx context.Context) bool {
+	method, _ := ctx.Value(authMethodContextKey).(string)
+	return method == authMethodBearer
+}
 
 // ===== Auth Handlers =====
 
@@ -207,26 +221,224 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AuthMiddleware checks if the user is authenticated
+// AuthMiddleware checks if the user is authenticated via Bearer API token or session cookie.
 func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user, scopes, ok := h.authenticateBearer(r); ok {
+			ctx := context.WithValue(r.Context(), userContextKey, user)
+			ctx = context.WithValue(ctx, scopesContextKey, scopes)
+			ctx = context.WithValue(ctx, authMethodContextKey, authMethodBearer)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// Reject clearly invalid API tokens instead of falling through to session auth.
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+			if strings.HasPrefix(plaintext, "snorlx_") {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		sessionCookie, err := r.Cookie("session")
 		if err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// Get session from storage
 		_, user, err := h.storage.GetSession(r.Context(), sessionCookie.Value)
 		if err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 
-		// Add user to context
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx = context.WithValue(ctx, scopesContextKey, append([]string{}, defaultScopes...))
+		ctx = context.WithValue(ctx, authMethodContextKey, authMethodSession)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// RequireWriteScope rejects mutating requests when the API token lacks write scope.
+func (h *Handler) RequireWriteScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			scopes := h.getScopesFromContext(r.Context())
+			if !hasScope(scopes, "write") {
+				http.Error(w, "Forbidden: write scope required", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (h *Handler) authenticateBearer(r *http.Request) (*models.User, []string, bool) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return nil, nil, false
+	}
+	plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	if plaintext == "" || !strings.HasPrefix(plaintext, "snorlx_") {
+		return nil, nil, false
+	}
+	hash := hashApiToken(plaintext)
+	token, user, err := h.storage.GetApiTokenByHash(r.Context(), hash)
+	if err != nil || user == nil || token == nil {
+		return nil, nil, false
+	}
+	_ = h.storage.TouchApiTokenLastUsed(r.Context(), token.ID)
+	scopes := token.Scopes
+	if len(scopes) == 0 {
+		scopes = append([]string{}, defaultScopes...)
+	}
+	return user, scopes, true
+}
+
+func hashApiToken(plaintext string) string {
+	sum := sha256.Sum256([]byte(plaintext))
+	return hex.EncodeToString(sum[:])
+}
+
+func hasScope(scopes []string, want string) bool {
+	for _, s := range scopes {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) getScopesFromContext(ctx context.Context) []string {
+	scopes, _ := ctx.Value(scopesContextKey).([]string)
+	return scopes
+}
+
+// ===== API Token Handlers =====
+
+type createApiTokenRequest struct {
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+}
+
+// ListApiTokens lists the current user's non-revoked API tokens.
+func (h *Handler) ListApiTokens(w http.ResponseWriter, r *http.Request) {
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	tokens, err := h.storage.ListApiTokens(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "Failed to list tokens", http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": tokens})
+}
+
+// CreateApiToken mints a personal API token; plaintext is returned only once.
+func (h *Handler) CreateApiToken(w http.ResponseWriter, r *http.Request) {
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req createApiTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	scopes, err := normalizeScopes(req.Scopes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	plaintext, err := generateApiTokenPlaintext("snorlx_")
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	token := &models.ApiToken{
+		UserID:      user.ID,
+		Name:        name,
+		TokenPrefix: plaintext[:min(12, len(plaintext))],
+		TokenHash:   hashApiToken(plaintext),
+		Scopes:      scopes,
+	}
+	created, err := h.storage.CreateApiToken(r.Context(), token)
+	if err != nil {
+		http.Error(w, "Failed to create token", http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":           created.ID,
+		"name":         created.Name,
+		"token_prefix": created.TokenPrefix,
+		"scopes":       created.Scopes,
+		"created_at":   created.CreatedAt,
+		"token":        plaintext,
+	})
+}
+
+// RevokeApiToken revokes one of the current user's API tokens.
+func (h *Handler) RevokeApiToken(w http.ResponseWriter, r *http.Request) {
+	user := h.getUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "Invalid token id", http.StatusBadRequest)
+		return
+	}
+	if err := h.storage.RevokeApiToken(r.Context(), user.ID, id); err != nil {
+		http.Error(w, "Token not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func normalizeScopes(scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return append([]string{}, defaultScopes...), nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(scopes))
+	for _, s := range scopes {
+		s = strings.TrimSpace(strings.ToLower(s))
+		if s != "read" && s != "write" {
+			return nil, errors.New("scopes must be read and/or write")
+		}
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	if !seen["read"] {
+		out = append([]string{"read"}, out...)
+	}
+	return out, nil
+}
+
+func generateApiTokenPlaintext(prefix string) (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(buf), nil
 }
 
 // ===== Webhook Handler =====

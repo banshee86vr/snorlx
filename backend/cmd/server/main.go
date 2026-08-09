@@ -133,7 +133,8 @@ func main() {
 		// Protected routes
 		r.Group(func(r chi.Router) {
 			r.Use(h.AuthMiddleware)
-			// CSRF protection: validate Origin header on state-changing requests
+			r.Use(h.RequireWriteScope)
+			// CSRF: Origin check for cookie sessions; skipped for Bearer API tokens
 			r.Use(csrfMiddleware(cfg.FrontendURL))
 
 			// Pipelines (literal path first so it is not shadowed by /runs/{id})
@@ -174,6 +175,11 @@ func main() {
 			// Dashboard
 			r.Get("/dashboard/summary", h.GetDashboardSummary)
 			r.Get("/dashboard/trends", h.GetTrends)
+
+			// Personal API tokens (MCP)
+			r.Get("/tokens", h.ListApiTokens)
+			r.Post("/tokens", h.CreateApiToken)
+			r.Delete("/tokens/{id}", h.RevokeApiToken)
 
 		})
 	})
@@ -238,7 +244,12 @@ func jsonContentTypeMiddleware(next http.Handler) http.Handler {
 func csrfMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
+			// Skip Origin checks only for requests authenticated with a validated API token.
+			if handlers.IsBearerAuth(r.Context()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete {
 				origin := r.Header.Get("Origin")
 				// Allow requests with no Origin (e.g. same-origin direct requests, curl in dev)
 				if origin != "" && !strings.EqualFold(origin, allowedOrigin) {
