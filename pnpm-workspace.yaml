@@ -3,7 +3,7 @@ packages:
   - 'mcp'
 
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
 
 minimumReleaseAgeExclude:
   - '@typescript-eslint/*'

@@ -12,11 +12,13 @@ import {
 // ===== fetch mock setup =====
 
 function mockFetch(body: unknown, status = 200) {
+  const text =
+    typeof body === "string" ? body : JSON.stringify(body ?? null);
   globalThis.fetch = vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
     json: () => Promise.resolve(body),
-    text: () => Promise.resolve(String(body)),
+    text: () => Promise.resolve(text),
   });
 }
 
