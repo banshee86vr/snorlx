@@ -120,13 +120,13 @@ importers:
     dependencies:
       '@modelcontextprotocol/sdk':
         specifier: ^1.25.0
-        version: 1.30.0(supports-color@10.2.2)(zod@3.25.76)
+        version: 1.30.0(supports-color@10.2.2)(zod@4.3.6)
       express:
         specifier: ^5.2.1
         version: 5.2.1(supports-color@10.2.2)
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.0.0
+        version: 4.3.6
     devDependencies:
       '@types/express':
         specifier: ^5.0.6
@@ -2597,9 +2597,6 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
   zod@4.3.6:
     resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
@@ -2945,7 +2942,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.3.6)':
     dependencies:
       '@hono/node-server': 2.1.0(hono@4.13.1)
       ajv: 8.20.0
@@ -2962,8 +2959,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.3.6
+      zod-to-json-schema: 3.25.2(zod@4.3.6)
     transitivePeerDependencies:
       - supports-color
 
@@ -4856,15 +4853,13 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@4.3.6):
     dependencies:
-      zod: 3.25.76
+      zod: 4.3.6
 
   zod-validation-error@4.0.2(zod@4.3.6):
     dependencies:
       zod: 4.3.6
-
-  zod@3.25.76: {}
 
   zod@4.3.6: {}
 
