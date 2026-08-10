@@ -18,6 +18,7 @@ minimumReleaseAgeExclude:
   - vitest@4.1.10
   - '@testing-library/jest-dom@7.0.0'
   - recharts@3.10.0
+  - lucide-react@1.31.0
 
 onlyBuiltDependencies:
   - esbuild
