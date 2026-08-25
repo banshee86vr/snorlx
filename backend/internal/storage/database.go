@@ -1201,12 +1201,14 @@ func (d *DatabaseStorage) GetTrends(ctx context.Context, days int) ([]models.Tre
 	var trends []models.Trend
 	for rows.Next() {
 		var trend models.Trend
+		var avgDuration sql.NullFloat64
 		if err := rows.Scan(
 			&trend.Date, &trend.TotalRuns, &trend.SuccessfulRuns,
-			&trend.FailedRuns, &trend.AvgDuration, &trend.DeploymentCount,
+			&trend.FailedRuns, &avgDuration, &trend.DeploymentCount,
 		); err != nil {
 			return nil, err
 		}
+		trend.AvgDuration = int(avgDuration.Float64)
 		trends = append(trends, trend)
 	}
 
