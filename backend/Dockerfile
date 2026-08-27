@@ -25,8 +25,9 @@ RUN addgroup -S snorlx && adduser -S -G snorlx snorlx
 
 WORKDIR /app
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates wget
+# Install ca-certificates for HTTPS; upgrade openssl packages for libssl3 CVEs
+RUN apk --no-cache add ca-certificates wget \
+    && apk --no-cache upgrade libssl3 libcrypto3 openssl
 
 # Copy binary from builder
 COPY --from=builder /app/server .

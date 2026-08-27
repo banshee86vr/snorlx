@@ -1,4 +1,4 @@
-# Build stage — use pnpm from repo root (build context must be repo root)
+# Build stage: use pnpm from repo root (build context must be repo root)
 FROM node:26-alpine AS builder
 
 RUN npm install -g pnpm@11.10.0
@@ -24,6 +24,9 @@ RUN pnpm run build
 
 # Production stage
 FROM nginx:stable-alpine
+
+# Upgrade openssl packages for libssl3 CVEs reported by Trivy
+RUN apk --no-cache upgrade libssl3 libcrypto3 openssl
 
 # Copy built assets
 COPY --from=builder /app/frontend/dist /usr/share/nginx/html
