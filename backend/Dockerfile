@@ -1,5 +1,5 @@
-# Build stage — use the same Go version as go.mod
-# Use 1.26 for image availability in CI; go.mod uses 1.26.1 for toolchain/govulncheck
+# Build stage: use the same major.minor as go.mod
+# Floating 1.26 tag for image availability; go.mod pins the patch for govulncheck
 FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
