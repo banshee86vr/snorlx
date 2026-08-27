@@ -1,6 +1,5 @@
-# Build stage: use the same major.minor as go.mod
-# Floating 1.26 tag for image availability; go.mod pins the patch for govulncheck
-FROM golang:1.26-alpine AS builder
+# Build stage: use a 1.27 image for availability; go.mod pins the patch for govulncheck
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 
