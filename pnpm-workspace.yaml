@@ -21,6 +21,7 @@ minimumReleaseAgeExclude:
   - lucide-react@1.34.0
   - '@tanstack/query-core@5.102.6'
   - '@tanstack/react-query@5.102.6'
+  - '@types/node@26.4.0'
 
 onlyBuiltDependencies:
   - esbuild
