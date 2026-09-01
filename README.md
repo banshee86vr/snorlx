@@ -9,6 +9,7 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 ## Features
 
 - **Centralized Visibility**: Single pane of glass for all workflow runs across repositories
+- **Failed pipeline triage**: Currently broken workflows and last-7-days failures across all synced repos, without opening each repository
 - **Repository Scoring**: Grade repos with gold/silver/bronze tiers across Security, Testing, CI/CD, Documentation, Code Quality, Maintenance, and Community
 - **Real-time Updates**: Live pipeline status via WebSocket
 - **GitHub OAuth**: Sign in with GitHub; no GitHub App setup required
@@ -20,6 +21,8 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 ## Architecture
 
 ![Architecture](docs/architecture.jpg)
+
+The Failures page and `GET /api/pipelines/failed` views are recorded in [docs/adr/0001-failed-pipelines-views.md](docs/adr/0001-failed-pipelines-views.md). Agents reach the same APIs through the MCP server (stdio or HTTP `/mcp`); see [docs/mcp.md](docs/mcp.md).
 
 ## Quick Start
 
@@ -390,6 +393,11 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 - `GET /api/runs/:id/workflow-definition` - Get workflow YAML definition
 - `POST /api/runs/:id/rerun` - Rerun a workflow
 - `POST /api/runs/:id/cancel` - Cancel a running workflow
+
+### Pipelines
+
+- `GET /api/pipelines/active` - In-progress and queued runs
+- `GET /api/pipelines/failed` - Currently broken or recent failed runs (`view=current|recent`)
 
 ### Jobs
 

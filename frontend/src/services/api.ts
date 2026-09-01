@@ -154,10 +154,38 @@ export const jobsApi = {
 	getLogs: (id: number) => fetchApi<{ url: string }>(`/api/jobs/${id}/logs`),
 };
 
-// Pipelines API (active = in_progress + queued runs)
+export type FailedPipelineView = "current" | "recent";
+
+export type FailedPipelineListOpts = {
+	view?: FailedPipelineView;
+	refresh?: boolean;
+	q?: string;
+	page?: number;
+};
+
+// Pipelines API (active = in_progress + queued runs; failed = currently broken or recent)
 export const pipelinesApi = {
 	listActive: (refresh = false) =>
 		fetchApi<WorkflowRun[]>(`/api/pipelines/active${refresh ? "?refresh=true" : ""}`),
+	listFailed: (opts: FailedPipelineListOpts = {}) => {
+		const params = new URLSearchParams();
+		if (opts.view) {
+			params.set("view", opts.view);
+		}
+		if (opts.refresh) {
+			params.set("refresh", "true");
+		}
+		if (opts.q?.trim()) {
+			params.set("q", opts.q.trim());
+		}
+		if (opts.page != null && opts.page > 0) {
+			params.set("page", String(opts.page));
+		}
+		const qs = params.toString();
+		return fetchApi<ListResponse<WorkflowRun>>(
+			`/api/pipelines/failed${qs ? `?${qs}` : ""}`,
+		);
+	},
 };
 
 // Dashboard API

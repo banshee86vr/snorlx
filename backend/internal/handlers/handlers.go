@@ -710,7 +710,7 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 		"message": "Sync started, progress will be sent via WebSocket",
 	})
 
-	// Run sync in background; do not use r.Context() — it is cancelled when the handler returns (after 202),
+	// Run sync in background; do not use r.Context(). It is cancelled when the handler returns (after 202),
 	// which would immediately cancel the sync and trigger sync:error. Use Background so sync runs to completion.
 	go h.runSync(context.Background(), accessToken) // #nosec G118 -- intentional: sync must outlive the HTTP request
 }
@@ -1214,6 +1214,62 @@ func (h *Handler) ListActivePipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(runs)
+}
+
+// ListFailedPipelines returns currently-broken or recent failed runs from storage.
+// Optional refresh=true pulls latest runs from GitHub first (same helper as active pipelines).
+func (h *Handler) ListFailedPipelines(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	if view == "" {
+		view = models.FailedPipelineViewCurrent
+	}
+	if view != models.FailedPipelineViewCurrent && view != models.FailedPipelineViewRecent {
+		http.Error(w, "Invalid view: must be current or recent", http.StatusBadRequest)
+		return
+	}
+
+	refresh := r.URL.Query().Get("refresh") == "true" || r.URL.Query().Get("refresh") == "1"
+	if refresh {
+		user := h.getUserFromContext(r.Context())
+		if user != nil {
+			h.pullLatestRunsFromGitHub(r.Context(), user)
+		}
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	runs, total, err := h.storage.ListFailedPipelines(r.Context(), models.FailedPipelineOpts{
+		View:     view,
+		Query:    strings.TrimSpace(r.URL.Query().Get("q")),
+		Page:     page,
+		PageSize: models.FailedPipelineRecentPageSize,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to fetch failed pipelines")
+		http.Error(w, "Failed to fetch failed pipelines", http.StatusInternalServerError)
+		return
+	}
+	if runs == nil {
+		runs = []models.WorkflowRun{}
+	}
+
+	pageSize := models.FailedPipelineRecentPageSize
+	if view == models.FailedPipelineViewCurrent {
+		page = 1
+		pageSize = total
+	}
+
+	_ = json.NewEncoder(w).Encode(models.ListResponse[models.WorkflowRun]{
+		Data: runs,
+		Pagination: models.Pagination{
+			Page:     page,
+			PageSize: pageSize,
+			Total:    total,
+		},
+	})
 }
 
 // GetRun gets a single run. If query param refresh=true is set, fetches the latest

@@ -60,6 +60,24 @@ export function createSnorlxMcpServer(client: SnorlxApiClient): McpServer {
     }
   });
 
+  server.tool(
+    'list_failed_pipelines',
+    'List currently broken workflows, or failed runs from the last 7 days, across synced repositories.',
+    {
+      view: z.enum(['current', 'recent']).optional(),
+      q: z.string().optional(),
+      page: z.number().int().min(1).optional(),
+      refresh: z.boolean().optional(),
+    },
+    async (args) => {
+      try {
+        return textResult(await client.request('GET', '/api/pipelines/failed', { query: args }));
+      } catch (err) {
+        return errorResult(err);
+      }
+    },
+  );
+
   server.tool('list_organizations', 'List organizations known to Snorlx.', {}, async () => {
     try {
       return textResult(await client.request('GET', '/api/organizations'));

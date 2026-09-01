@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   GitBranch,
+  XCircle,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useSidebar } from '../../context/SidebarContext';
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
   { name: 'Runs', href: '/runs', icon: Play },
+  { name: 'Failures', href: '/failures', icon: XCircle },
   { name: 'Repositories', href: '/repositories', icon: FolderGit2 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
@@ -48,6 +50,7 @@ export function Sidebar() {
             <NavLink
               key={item.name}
               to={item.href}
+              end={item.href === '/'}
               title={isCollapsed ? item.name : undefined}
               className={({ isActive }) =>
                 cn(

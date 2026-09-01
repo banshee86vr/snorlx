@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -545,6 +546,131 @@ func (m *MemoryStorage) ListActivePipelines(ctx context.Context) ([]models.Workf
 	})
 
 	return runs, nil
+}
+
+func (m *MemoryStorage) ListFailedPipelines(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	view := opts.View
+	if view == "" {
+		view = models.FailedPipelineViewCurrent
+	}
+
+	var runs []models.WorkflowRun
+	switch view {
+	case models.FailedPipelineViewCurrent:
+		latestCompleted := make(map[int]models.WorkflowRun)
+		for _, run := range m.runs {
+			if run.Status != "completed" {
+				continue
+			}
+			if !m.workflowIsActive(run.WorkflowID) {
+				continue
+			}
+			prev, ok := latestCompleted[run.WorkflowID]
+			if !ok || run.StartedAt.After(prev.StartedAt) {
+				latestCompleted[run.WorkflowID] = m.copyRunWithRefs(run)
+			}
+		}
+		for _, run := range latestCompleted {
+			if !conclusionIsFailure(&run) {
+				continue
+			}
+			if !matchesFailedQuery(run, opts.Query) {
+				continue
+			}
+			runs = append(runs, run)
+		}
+	case models.FailedPipelineViewRecent:
+		cutoff := time.Now().Add(-time.Duration(models.FailedPipelineRecentDays) * 24 * time.Hour)
+		for _, run := range m.runs {
+			if !conclusionIsFailure(run) {
+				continue
+			}
+			if run.StartedAt.Before(cutoff) {
+				continue
+			}
+			if !m.workflowIsActive(run.WorkflowID) {
+				continue
+			}
+			runCopy := m.copyRunWithRefs(run)
+			if !matchesFailedQuery(runCopy, opts.Query) {
+				continue
+			}
+			runs = append(runs, runCopy)
+		}
+	default:
+		return nil, 0, fmt.Errorf("invalid failed pipeline view %q", view)
+	}
+
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].StartedAt.After(runs[j].StartedAt)
+	})
+
+	total := len(runs)
+	if view == models.FailedPipelineViewCurrent {
+		return runs, total, nil
+	}
+
+	page, pageSize := normalizeFailedPipelinePage(opts)
+	offset := (page - 1) * pageSize
+	if offset >= len(runs) {
+		return []models.WorkflowRun{}, total, nil
+	}
+	end := offset + pageSize
+	if end > len(runs) {
+		end = len(runs)
+	}
+	return runs[offset:end], total, nil
+}
+
+func (m *MemoryStorage) copyRunWithRefs(run *models.WorkflowRun) models.WorkflowRun {
+	runCopy := *run
+	if wf, ok := m.workflows[run.WorkflowID]; ok {
+		runCopy.Workflow = &models.Workflow{Name: wf.Name}
+	}
+	if repo, ok := m.repositories[run.RepoID]; ok {
+		runCopy.Repository = &models.Repository{FullName: repo.FullName}
+	}
+	return runCopy
+}
+
+func (m *MemoryStorage) workflowIsActive(workflowID int) bool {
+	wf, ok := m.workflows[workflowID]
+	return ok && strings.EqualFold(wf.State, "active")
+}
+
+func conclusionIsFailure(run *models.WorkflowRun) bool {
+	return run != nil && run.Conclusion != nil && *run.Conclusion == "failure"
+}
+
+func matchesFailedQuery(run models.WorkflowRun, q string) bool {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		return true
+	}
+	repo := ""
+	if run.Repository != nil {
+		repo = strings.ToLower(run.Repository.FullName)
+	}
+	wf := ""
+	if run.Workflow != nil {
+		wf = strings.ToLower(run.Workflow.Name)
+	}
+	return strings.Contains(repo, q) || strings.Contains(wf, q)
+}
+
+func normalizeFailedPipelinePage(opts models.FailedPipelineOpts) (page, pageSize int) {
+	page = opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize = opts.PageSize
+	if pageSize < 1 {
+		pageSize = models.FailedPipelineRecentPageSize
+	}
+	return page, pageSize
 }
 
 func (m *MemoryStorage) GetRun(ctx context.Context, id int) (*models.WorkflowRun, error) {

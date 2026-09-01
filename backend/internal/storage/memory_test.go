@@ -362,6 +362,200 @@ func TestGetRunByGitHubID(t *testing.T) {
 	}
 }
 
+func ptrString(s string) *string {
+	return &s
+}
+
+func seedFailedPipelineFixtures(t *testing.T, s *MemoryStorage) (activeWF, disabledWF, otherWF *models.Workflow) {
+	t.Helper()
+	ctx := context.Background()
+
+	app, err := s.UpsertRepository(ctx, &models.Repository{GitHubID: 1, Name: "app", FullName: "acme/app", IsActive: true})
+	if err != nil {
+		t.Fatalf("seed app repo: %v", err)
+	}
+	lib, err := s.UpsertRepository(ctx, &models.Repository{GitHubID: 2, Name: "lib", FullName: "acme/lib", IsActive: true})
+	if err != nil {
+		t.Fatalf("seed lib repo: %v", err)
+	}
+	activeWF, err = s.UpsertWorkflow(ctx, &models.Workflow{GitHubID: 11, RepoID: app.ID, Name: "CI", State: "active"})
+	if err != nil {
+		t.Fatalf("seed active workflow: %v", err)
+	}
+	disabledWF, err = s.UpsertWorkflow(ctx, &models.Workflow{GitHubID: 12, RepoID: app.ID, Name: "Nightly", State: "disabled"})
+	if err != nil {
+		t.Fatalf("seed disabled workflow: %v", err)
+	}
+	otherWF, err = s.UpsertWorkflow(ctx, &models.Workflow{GitHubID: 13, RepoID: lib.ID, Name: "Test", State: "active"})
+	if err != nil {
+		t.Fatalf("seed other workflow: %v", err)
+	}
+	return activeWF, disabledWF, otherWF
+}
+
+func TestListFailedPipelines_Current_StayUntilGreen(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	activeWF, _, _ := seedFailedPipelineFixtures(t, s)
+	now := time.Now()
+
+	if _, err := s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 101, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("failure"), Branch: "feat", StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("seed failed run: %v", err)
+	}
+	if _, err := s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 102, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "in_progress", Branch: "feat", StartedAt: now,
+	}); err != nil {
+		t.Fatalf("seed in-progress run: %v", err)
+	}
+
+	runs, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{View: models.FailedPipelineViewCurrent})
+	if err != nil {
+		t.Fatalf("ListFailedPipelines: %v", err)
+	}
+	if total != 1 || len(runs) != 1 {
+		t.Fatalf("expected 1 currently broken run, got total=%d len=%d", total, len(runs))
+	}
+	if runs[0].GitHubID != 101 {
+		t.Errorf("expected last completed failure, got github_id %d", runs[0].GitHubID)
+	}
+}
+
+func TestListFailedPipelines_Current_SuccessHides(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	activeWF, _, _ := seedFailedPipelineFixtures(t, s)
+	now := time.Now()
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 201, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: now.Add(-time.Hour),
+	})
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 202, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("success"), StartedAt: now,
+	})
+
+	runs, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{View: models.FailedPipelineViewCurrent})
+	if err != nil {
+		t.Fatalf("ListFailedPipelines: %v", err)
+	}
+	if total != 0 || len(runs) != 0 {
+		t.Fatalf("expected success to hide the workflow, got total=%d len=%d", total, len(runs))
+	}
+}
+
+func TestListFailedPipelines_Current_ExcludesDisabled(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	_, disabledWF, _ := seedFailedPipelineFixtures(t, s)
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 301, WorkflowID: disabledWF.ID, RepoID: disabledWF.RepoID, Name: "Nightly",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: time.Now(),
+	})
+
+	runs, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{View: models.FailedPipelineViewCurrent})
+	if err != nil {
+		t.Fatalf("ListFailedPipelines: %v", err)
+	}
+	if total != 0 || len(runs) != 0 {
+		t.Fatalf("expected disabled workflow excluded, got total=%d", total)
+	}
+}
+
+func TestListFailedPipelines_Recent_IncludesLaterGreen(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	activeWF, _, _ := seedFailedPipelineFixtures(t, s)
+	now := time.Now()
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 401, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: now.Add(-2 * time.Hour),
+	})
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 402, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("success"), StartedAt: now.Add(-time.Hour),
+	})
+
+	recent, recentTotal, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{
+		View: models.FailedPipelineViewRecent, Page: 1, PageSize: 50,
+	})
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if recentTotal != 1 || len(recent) != 1 || recent[0].GitHubID != 401 {
+		t.Fatalf("expected the older failure in recent, got total=%d runs=%v", recentTotal, recent)
+	}
+
+	current, currentTotal, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{View: models.FailedPipelineViewCurrent})
+	if err != nil {
+		t.Fatalf("current: %v", err)
+	}
+	if currentTotal != 0 || len(current) != 0 {
+		t.Fatalf("expected current empty after later success, got total=%d", currentTotal)
+	}
+}
+
+func TestListFailedPipelines_QueryMatchesRepoAndWorkflow(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	activeWF, _, otherWF := seedFailedPipelineFixtures(t, s)
+	now := time.Now()
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 501, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: now,
+	})
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 502, WorkflowID: otherWF.ID, RepoID: otherWF.RepoID, Name: "Test",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: now,
+	})
+
+	byRepo, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{
+		View: models.FailedPipelineViewCurrent, Query: "acme/app",
+	})
+	if err != nil {
+		t.Fatalf("query repo: %v", err)
+	}
+	if total != 1 || len(byRepo) != 1 || byRepo[0].GitHubID != 501 {
+		t.Fatalf("expected acme/app only, got total=%d", total)
+	}
+
+	byWorkflow, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{
+		View: models.FailedPipelineViewCurrent, Query: "test",
+	})
+	if err != nil {
+		t.Fatalf("query workflow: %v", err)
+	}
+	if total != 1 || len(byWorkflow) != 1 || byWorkflow[0].GitHubID != 502 {
+		t.Fatalf("expected Test workflow only, got total=%d", total)
+	}
+}
+
+func TestListFailedPipelines_Recent_ExcludesOldFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+	activeWF, _, _ := seedFailedPipelineFixtures(t, s)
+
+	s.UpsertRun(ctx, &models.WorkflowRun{
+		GitHubID: 601, WorkflowID: activeWF.ID, RepoID: activeWF.RepoID, Name: "CI",
+		Status: "completed", Conclusion: ptrString("failure"), StartedAt: time.Now().Add(-8 * 24 * time.Hour),
+	})
+
+	runs, total, err := s.ListFailedPipelines(ctx, models.FailedPipelineOpts{View: models.FailedPipelineViewRecent})
+	if err != nil {
+		t.Fatalf("ListFailedPipelines: %v", err)
+	}
+	if total != 0 || len(runs) != 0 {
+		t.Fatalf("expected old failure excluded from recent, got total=%d", total)
+	}
+}
+
 // ===== Jobs =====
 
 func TestUpsertAndGetJob(t *testing.T) {
@@ -612,7 +806,7 @@ func TestGetTrends(t *testing.T) {
 
 	s.UpsertRun(ctx, &models.WorkflowRun{GitHubID: 1, StartedAt: now, Conclusion: &success})
 	s.UpsertRun(ctx, &models.WorkflowRun{GitHubID: 2, StartedAt: now.Add(-time.Hour), Conclusion: &failure})
-	// Older than 7 days — should not appear
+	// Older than 7 days: should not appear
 	s.UpsertRun(ctx, &models.WorkflowRun{GitHubID: 3, StartedAt: now.Add(-8 * 24 * time.Hour), Conclusion: &success})
 
 	trends, err := s.GetTrends(ctx, 7)

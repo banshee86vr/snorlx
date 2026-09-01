@@ -139,6 +139,7 @@ func main() {
 
 			// Pipelines (literal path first so it is not shadowed by /runs/{id})
 			r.Get("/pipelines/active", h.ListActivePipelines)
+			r.Get("/pipelines/failed", h.ListFailedPipelines)
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)

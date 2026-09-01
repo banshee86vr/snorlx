@@ -69,7 +69,7 @@ export function Dashboard() {
 		queryFn: () => repositoriesApi.listScores(),
 	});
 
-	// Fetch active pipelines (in_progress + queued) — 10s poll from storage; manual refresh fetches from GitHub
+	// Fetch active pipelines (in_progress + queued): 10s poll from storage; manual refresh fetches from GitHub
 	const {
 		data: activePipelinesData,
 		dataUpdatedAt,
@@ -91,6 +91,16 @@ export function Dashboard() {
 	const activePipelines = Array.isArray(activePipelinesData)
 		? activePipelinesData
 		: [];
+
+	const { data: failedPipelinesData, isError: failedPipelinesError } = useQuery({
+		queryKey: ["pipelines", "failed", "current"],
+		queryFn: () => pipelinesApi.listFailed({ view: "current" }),
+		refetchInterval: 30000,
+		refetchOnMount: "always",
+	});
+
+	const failedPipelines = failedPipelinesData?.data ?? [];
+	const failedPreview = failedPipelines.slice(0, 5);
 
 	const handleRefreshPipelines = async () => {
 		setPipelinesRefreshingFromGitHub(true);
@@ -220,7 +230,7 @@ export function Dashboard() {
 						/>
 						<StatCard
 							title="Repository Health"
-							value={scores.length > 0 ? `${Math.round(avgScore)}%` : "—"}
+							value={scores.length > 0 ? `${Math.round(avgScore)}%` : "-"}
 							icon={Award}
 							color="info"
 							subtitle={repoHealthSubtitle}
@@ -325,6 +335,60 @@ export function Dashboard() {
 						</div>
 					)}
 				</div>
+			</div>
+
+			{/* Currently failing teaser */}
+			<div>
+				<div className="flex flex-wrap items-center gap-3 mb-4">
+					<XCircle className="w-5 h-5 text-red-500" />
+					<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+						Currently failing
+					</h2>
+					{failedPipelines.length > 0 && (
+						<span className="text-sm text-gray-500 dark:text-gray-400">
+							({failedPipelines.length})
+						</span>
+					)}
+					<Link
+						to="/failures"
+						className="ml-auto text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+					>
+						View all
+					</Link>
+				</div>
+				{failedPipelinesError ? (
+					<div className="card p-6 text-sm text-gray-500 dark:text-gray-400">
+						Could not load failing workflows.
+					</div>
+				) : failedPreview.length > 0 ? (
+					<div className="card divide-y divide-gray-200 dark:divide-gray-700">
+						{failedPreview.map((run) => (
+							<Link
+								key={run.id}
+								to={`/runs/${run.id}`}
+								className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-800/60"
+							>
+								<XCircle className="w-4 h-4 text-red-500 shrink-0" />
+								<div className="min-w-0 flex-1">
+									<p className="font-medium text-gray-900 dark:text-gray-100 truncate">
+										{run.workflow?.name || run.name}
+									</p>
+									<p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+										{run.repository?.full_name || "Unknown repository"}
+										{run.branch ? ` · ${run.branch}` : ""}
+									</p>
+								</div>
+								<span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+									{formatRelativeTime(run.started_at)}
+								</span>
+							</Link>
+						))}
+					</div>
+				) : (
+					<div className="card p-6 text-sm text-gray-500 dark:text-gray-400">
+						No failing workflows in synced repositories.
+					</div>
+				)}
 			</div>
 
 			{/* Charts Row */}

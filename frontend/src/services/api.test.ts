@@ -6,6 +6,7 @@ import {
   workflowsApi,
   runsApi,
   dashboardApi,
+  pipelinesApi,
   api,
 } from "./api";
 
@@ -285,6 +286,59 @@ describe("runsApi", () => {
     const [url, options] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(url).toContain("/api/runs/88/cancel");
     expect(options.method).toBe("POST");
+  });
+});
+
+// ===== pipelinesApi =====
+
+describe("pipelinesApi", () => {
+  it("listActive calls /api/pipelines/active", async () => {
+    mockFetch([]);
+
+    await pipelinesApi.listActive();
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/pipelines/active"),
+      expect.any(Object)
+    );
+  });
+
+  it("listActive appends refresh when requested", async () => {
+    mockFetch([]);
+
+    await pipelinesApi.listActive(true);
+
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/pipelines/active?refresh=true");
+  });
+
+  it("listFailed defaults to /api/pipelines/failed", async () => {
+    mockFetch({ data: [], pagination: {} });
+
+    await pipelinesApi.listFailed();
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/pipelines/failed"),
+      expect.any(Object)
+    );
+  });
+
+  it("listFailed includes view, q, page, and refresh", async () => {
+    mockFetch({ data: [], pagination: {} });
+
+    await pipelinesApi.listFailed({
+      view: "recent",
+      q: "acme/app",
+      page: 2,
+      refresh: true,
+    });
+
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/api/pipelines/failed");
+    expect(url).toContain("view=recent");
+    expect(url).toContain("q=acme%2Fapp");
+    expect(url).toContain("page=2");
+    expect(url).toContain("refresh=true");
   });
 });
 

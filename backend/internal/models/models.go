@@ -278,3 +278,18 @@ type RunFilters struct {
 	StartDate  time.Time `json:"start_date,omitempty"`
 	EndDate    time.Time `json:"end_date,omitempty"`
 }
+
+const (
+	FailedPipelineViewCurrent    = "current"
+	FailedPipelineViewRecent     = "recent"
+	FailedPipelineRecentDays     = 7
+	FailedPipelineRecentPageSize = 50
+)
+
+// FailedPipelineOpts selects currently-broken or recent failed runs.
+type FailedPipelineOpts struct {
+	View     string
+	Query    string
+	Page     int
+	PageSize int
+}

@@ -60,7 +60,7 @@ Without `MCP_HTTP_TOKEN`, anyone who can reach `/mcp` could drive all tools usin
 
 ## Tools
 
-Read tools cover dashboard summary/trends, orgs, repos, scores, workflows, runs, jobs, annotations, truncated logs, and active pipelines.
+Read tools cover dashboard summary/trends, orgs, repos, scores, workflows, runs, jobs, annotations, truncated logs, active pipelines, and failed pipelines (`list_failed_pipelines`).
 
 Write tools (require token `write` scope; confirm with the user before use):
 

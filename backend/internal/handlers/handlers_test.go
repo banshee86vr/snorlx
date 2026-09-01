@@ -23,6 +23,7 @@ type mockStorage struct {
 	getSessionFunc        func(ctx context.Context, sessionID string) (*models.Session, *models.User, error)
 	deleteSessionFunc     func(ctx context.Context, sessionID string) error
 	listOrgsFunc          func(ctx context.Context) ([]models.Organization, error)
+	listFailedFunc        func(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error)
 	getDashboardFunc      func(ctx context.Context) (*models.DashboardSummary, error)
 	getTrendsFunc         func(ctx context.Context, days int) ([]models.Trend, error)
 	getApiTokenByHashFunc func(ctx context.Context, tokenHash string) (*models.ApiToken, *models.User, error)
@@ -180,6 +181,12 @@ func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context) (int, error) {
 }
 func (m *mockStorage) ListActivePipelines(ctx context.Context) ([]models.WorkflowRun, error) {
 	return nil, nil
+}
+func (m *mockStorage) ListFailedPipelines(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+	if m.listFailedFunc != nil {
+		return m.listFailedFunc(ctx, opts)
+	}
+	return nil, 0, nil
 }
 func (m *mockStorage) UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error) {
 	return score, nil
@@ -733,5 +740,79 @@ func TestFilterRepositories_SyncReposEmpty_NoMatch(t *testing.T) {
 	result := h.filterRepositories(repos)
 	if len(result) != 0 {
 		t.Errorf("expected 0 repos when none match the filter, got %d", len(result))
+	}
+}
+
+func TestListFailedPipelines_InvalidView(t *testing.T) {
+	h := newTestHandler(&mockStorage{})
+	req := httptest.NewRequest(http.MethodGet, "/api/pipelines/failed?view=all", nil)
+	rec := httptest.NewRecorder()
+
+	h.ListFailedPipelines(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestListFailedPipelines_DefaultCurrent(t *testing.T) {
+	fail := "failure"
+	store := &mockStorage{
+		listFailedFunc: func(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+			if opts.View != models.FailedPipelineViewCurrent {
+				t.Errorf("expected current view, got %q", opts.View)
+			}
+			if opts.Query != "acme" {
+				t.Errorf("expected q=acme, got %q", opts.Query)
+			}
+			return []models.WorkflowRun{{
+				ID:         9,
+				Name:       "CI",
+				Status:     "completed",
+				Conclusion: &fail,
+			}}, 1, nil
+		},
+	}
+	h := newTestHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/pipelines/failed?q=acme", nil)
+	rec := httptest.NewRecorder()
+
+	h.ListFailedPipelines(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp models.ListResponse[models.WorkflowRun]
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Pagination.Total != 1 || len(resp.Data) != 1 || resp.Data[0].ID != 9 {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
+func TestListFailedPipelines_RecentPassesPage(t *testing.T) {
+	store := &mockStorage{
+		listFailedFunc: func(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+			if opts.View != models.FailedPipelineViewRecent {
+				t.Errorf("expected recent view, got %q", opts.View)
+			}
+			if opts.Page != 2 {
+				t.Errorf("expected page 2, got %d", opts.Page)
+			}
+			if opts.PageSize != models.FailedPipelineRecentPageSize {
+				t.Errorf("expected page size %d, got %d", models.FailedPipelineRecentPageSize, opts.PageSize)
+			}
+			return []models.WorkflowRun{}, 0, nil
+		},
+	}
+	h := newTestHandler(store)
+	req := httptest.NewRequest(http.MethodGet, "/api/pipelines/failed?view=recent&page=2", nil)
+	rec := httptest.NewRecorder()
+
+	h.ListFailedPipelines(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }

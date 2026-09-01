@@ -13,6 +13,7 @@ import {
 	FolderGit2,
 	Settings,
 	Workflow,
+	XCircle,
 } from "lucide-react";
 import { useSocket } from "../../context/SocketContext";
 import { useSync } from "../../context/SyncContext";
@@ -26,6 +27,7 @@ const mobileNavigation = [
 	{ name: "Dashboard", href: "/", icon: LayoutDashboard },
 	{ name: "Workflows", href: "/workflows", icon: Workflow },
 	{ name: "Runs", href: "/runs", icon: Play },
+	{ name: "Failures", href: "/failures", icon: XCircle },
 	{ name: "Repositories", href: "/repositories", icon: FolderGit2 },
 	{ name: "Settings", href: "/settings", icon: Settings },
 ];
@@ -190,6 +192,7 @@ export function Header() {
 							<NavLink
 								key={item.name}
 								to={item.href}
+								end={item.href === "/"}
 								onClick={() => setShowMobileMenu(false)}
 								className={({ isActive }) =>
 									cn(

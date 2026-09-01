@@ -683,6 +683,143 @@ func (d *DatabaseStorage) ListActivePipelines(ctx context.Context) ([]models.Wor
 	return runs, nil
 }
 
+func (d *DatabaseStorage) ListFailedPipelines(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+	view := opts.View
+	if view == "" {
+		view = models.FailedPipelineViewCurrent
+	}
+
+	switch view {
+	case models.FailedPipelineViewCurrent:
+		return d.listCurrentlyFailedPipelines(ctx, opts.Query)
+	case models.FailedPipelineViewRecent:
+		return d.listRecentFailedPipelines(ctx, opts)
+	default:
+		return nil, 0, fmt.Errorf("invalid failed pipeline view %q", view)
+	}
+}
+
+func (d *DatabaseStorage) listCurrentlyFailedPipelines(ctx context.Context, query string) ([]models.WorkflowRun, int, error) {
+	sqlQuery := `
+		WITH latest_completed AS (
+			SELECT DISTINCT ON (wr.workflow_id)
+			       wr.id, wr.github_id, wr.workflow_id, wr.repo_id, wr.run_number, wr.name,
+			       wr.status, wr.conclusion, wr.event, wr.branch, wr.commit_sha, wr.commit_message,
+			       wr.actor_login, wr.actor_avatar, wr.html_url, wr.started_at, wr.completed_at,
+			       wr.duration_seconds, wr.commit_timestamp, wr.is_deployment, wr.environment, wr.created_at,
+			       w.name as workflow_name, r.full_name as repo_full_name
+			FROM workflow_runs wr
+			JOIN workflows w ON w.id = wr.workflow_id
+			JOIN repositories r ON r.id = wr.repo_id
+			WHERE wr.status = 'completed' AND LOWER(w.state) = 'active'
+			ORDER BY wr.workflow_id, wr.started_at DESC
+		)
+		SELECT id, github_id, workflow_id, repo_id, run_number, name,
+		       status, conclusion, event, branch, commit_sha, commit_message,
+		       actor_login, actor_avatar, html_url, started_at, completed_at,
+		       duration_seconds, commit_timestamp, is_deployment, environment, created_at,
+		       workflow_name, repo_full_name
+		FROM latest_completed
+		WHERE conclusion = 'failure'
+	`
+	args := []interface{}{}
+	if q := strings.TrimSpace(query); q != "" {
+		sqlQuery += " AND (LOWER(repo_full_name) LIKE $1 OR LOWER(workflow_name) LIKE $1)"
+		args = append(args, failedPipelineLikePattern(q))
+	}
+	sqlQuery += " ORDER BY started_at DESC"
+
+	rows, err := d.pool.Query(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	runs, err := scanJoinedWorkflowRuns(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return runs, len(runs), nil
+}
+
+func (d *DatabaseStorage) listRecentFailedPipelines(ctx context.Context, opts models.FailedPipelineOpts) ([]models.WorkflowRun, int, error) {
+	page, pageSize := normalizeFailedPipelinePage(opts)
+	offset := (page - 1) * pageSize
+	cutoff := time.Now().Add(-time.Duration(models.FailedPipelineRecentDays) * 24 * time.Hour)
+
+	where := `
+		FROM workflow_runs wr
+		JOIN workflows w ON w.id = wr.workflow_id
+		JOIN repositories r ON r.id = wr.repo_id
+		WHERE wr.conclusion = 'failure'
+		  AND wr.started_at >= $1
+		  AND LOWER(w.state) = 'active'
+	`
+	args := []interface{}{cutoff}
+	argCount := 1
+	if q := strings.TrimSpace(opts.Query); q != "" {
+		argCount++
+		where += fmt.Sprintf(" AND (LOWER(r.full_name) LIKE $%d OR LOWER(w.name) LIKE $%d)", argCount, argCount)
+		args = append(args, failedPipelineLikePattern(q))
+	}
+
+	var total int
+	countQuery := "SELECT COUNT(*) " + where
+	if err := d.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	listQuery := `
+		SELECT wr.id, wr.github_id, wr.workflow_id, wr.repo_id, wr.run_number, wr.name,
+		       wr.status, wr.conclusion, wr.event, wr.branch, wr.commit_sha, wr.commit_message,
+		       wr.actor_login, wr.actor_avatar, wr.html_url, wr.started_at, wr.completed_at,
+		       wr.duration_seconds, wr.commit_timestamp, wr.is_deployment, wr.environment, wr.created_at,
+		       w.name as workflow_name, r.full_name as repo_full_name
+	` + where + fmt.Sprintf(" ORDER BY wr.started_at DESC LIMIT $%d OFFSET $%d", argCount+1, argCount+2)
+	args = append(args, pageSize, offset)
+
+	rows, err := d.pool.Query(ctx, listQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	runs, err := scanJoinedWorkflowRuns(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return runs, total, nil
+}
+
+func failedPipelineLikePattern(q string) string {
+	return "%" + strings.ToLower(strings.TrimSpace(q)) + "%"
+}
+
+func scanJoinedWorkflowRuns(rows pgx.Rows) ([]models.WorkflowRun, error) {
+	var runs []models.WorkflowRun
+	for rows.Next() {
+		var run models.WorkflowRun
+		var workflowName, repoFullName string
+		err := rows.Scan(
+			&run.ID, &run.GitHubID, &run.WorkflowID, &run.RepoID, &run.RunNumber, &run.Name,
+			&run.Status, &run.Conclusion, &run.Event, &run.Branch, &run.CommitSHA, &run.CommitMessage,
+			&run.ActorLogin, &run.ActorAvatar, &run.HTMLURL, &run.StartedAt, &run.CompletedAt,
+			&run.DurationSeconds, &run.CommitTimestamp, &run.IsDeployment, &run.Environment, &run.CreatedAt,
+			&workflowName, &repoFullName,
+		)
+		if err != nil {
+			continue
+		}
+		run.Workflow = &models.Workflow{Name: workflowName}
+		run.Repository = &models.Repository{FullName: repoFullName}
+		runs = append(runs, run)
+	}
+	if runs == nil {
+		runs = []models.WorkflowRun{}
+	}
+	return runs, rows.Err()
+}
+
 func (d *DatabaseStorage) GetRun(ctx context.Context, id int) (*models.WorkflowRun, error) {
 	var run models.WorkflowRun
 	err := d.pool.QueryRow(ctx, `

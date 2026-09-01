@@ -6,6 +6,7 @@ import { Workflows } from "./pages/Workflows";
 import { WorkflowDetail } from "./pages/WorkflowDetail";
 import { Runs } from "./pages/Runs";
 import { RunDetail } from "./pages/RunDetail";
+import { Failures } from "./pages/Failures";
 import { Repositories } from "./pages/Repositories";
 import { RepositoryDetail } from "./pages/RepositoryDetail";
 import { Settings } from "./pages/Settings";
@@ -42,6 +43,7 @@ function App() {
 													/>
 													<Route path="/runs" element={<Runs />} />
 													<Route path="/runs/:id" element={<RunDetail />} />
+													<Route path="/failures" element={<Failures />} />
 													<Route
 														path="/repositories"
 														element={<Repositories />}
