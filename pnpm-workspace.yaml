@@ -8,7 +8,7 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@babel/core@7.29.7'
   - '@typescript-eslint/*'
-  - '@vitest/coverage-v8@4.1.10'
+  - '@vitest/coverage-v8@5.0.0'
   - '@vitest/expect@4.1.10'
   - '@vitest/mocker@4.1.10'
   - '@vitest/pretty-format@4.1.10'
@@ -16,10 +16,10 @@ minimumReleaseAgeExclude:
   - '@vitest/snapshot@4.1.10'
   - '@vitest/spy@4.1.10'
   - '@vitest/utils@4.1.10'
-  - vitest@4.1.10
+  - vitest@5.0.0
   - '@testing-library/jest-dom@7.0.0'
   - recharts@3.10.0
-  - lucide-react@1.34.0
+  - lucide-react@1.43.0
   - '@tanstack/query-core@5.102.6'
   - '@tanstack/react-query@5.102.6'
   - '@types/node@26.4.0'
@@ -28,6 +28,8 @@ onlyBuiltDependencies:
   - esbuild
 
 overrides:
+  lucide-react: 1.43.0
+  zod: 4.5.4
   '@babel/core': '>=7.29.6 <9'
   rollup: '>=4.59.0'
   lodash: '>=4.18.0'

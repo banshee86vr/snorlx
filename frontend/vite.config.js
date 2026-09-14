@@ -15,6 +15,7 @@ export default defineConfig({
         environment: "jsdom",
         setupFiles: ["./src/test/setup.ts"],
         coverage: {
+            coverageFilesDirectory: "./node_modules/.vite/coverage",
             provider: "v8",
             reporter: ["text", "lcov"],
             include: ["src/**/*.{ts,tsx}"],
