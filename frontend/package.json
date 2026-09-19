@@ -44,6 +44,6 @@
     "typescript-7": "npm:typescript@^7.0.2",
     "vite": "^8.2.1",
     "vitest": "^5.0.0",
-    "@types/node": "^26.5.1"
+    "@types/node": "^26.6.1"
   }
 }
