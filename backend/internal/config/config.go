@@ -30,6 +30,9 @@ type Config struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 
+	// GitHub base URL (optional)
+	GitHubBaseURL string
+
 	// GitHub Webhooks (optional)
 	GitHubWebhookSecret string
 
@@ -76,6 +79,7 @@ func Load() (*Config, error) {
 		DatabaseURL:         os.Getenv("DATABASE_URL"),
 		GitHubClientID:      os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:  os.Getenv("GITHUB_CLIENT_SECRET"),
+		GitHubBaseURL:       os.Getenv("GITHUB_BASE_URL"),
 		GitHubWebhookSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		SessionSecret:       getEnv("SESSION_SECRET", "change-me-in-production"),
 		SyncLimit:           syncLimit,
