@@ -1,6 +1,6 @@
 # Snorlx - CI/CD Dashboard for GitHub Actions
 
-[![CI](https://github.com/banshee86vr/snorlx/actions/workflows/ci.yml/badge.svg)](https://github.com/banshee86vr/snorlx/actions/workflows/ci.yml) [![Security Scans](https://github.com/banshee86vr/snorlx/actions/workflows/security.yml/badge.svg)](https://github.com/banshee86vr/snorlx/actions/workflows/security.yml)
+[![CI](https://github.com/banshee86vr/snorlx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/banshee86vr/snorlx/actions/workflows/ci.yml) [![Security Scans](https://github.com/banshee86vr/snorlx/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/banshee86vr/snorlx/actions/workflows/security.yml) [![Release](https://github.com/banshee86vr/snorlx/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/banshee86vr/snorlx/actions/workflows/release.yml) [![Latest release](https://img.shields.io/github/v/release/banshee86vr/snorlx?sort=semver)](https://github.com/banshee86vr/snorlx/releases/latest) [![Go](https://img.shields.io/github/go-mod/go-version/banshee86vr/snorlx?filename=backend%2Fgo.mod)](backend/go.mod) [![License: MIT](https://img.shields.io/github/license/banshee86vr/snorlx)](LICENSE)
 
 A comprehensive, self-hosted dashboard that provides centralized visibility over GitHub Actions pipelines, performance metrics, and costs distributed across multiple repositories and organizations.
 
