@@ -1592,8 +1592,49 @@ func (h *Handler) GetJobLogs(w http.ResponseWriter, r *http.Request) {
 
 // WorkflowDefinition represents the parsed workflow YAML structure
 type WorkflowDefinition struct {
-	Name string                           `yaml:"name" json:"name"`
-	Jobs map[string]WorkflowJobDefinition `yaml:"jobs" json:"jobs"`
+	Name string       `yaml:"name"`
+	Jobs workflowJobs `yaml:"jobs"`
+}
+
+// workflowJobs keeps the jobs of a workflow in file order. GitHub lists and draws jobs in that
+// order and the frontend mirrors it; a Go map would hand out a different order on every request.
+type workflowJobs struct {
+	order []string
+	byID  map[string]WorkflowJobDefinition
+}
+
+// UnmarshalYAML decodes the `jobs` mapping while remembering the key order.
+func (j *workflowJobs) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.MappingNode {
+		return errors.New("workflow jobs must be a YAML mapping")
+	}
+	j.order = j.order[:0]
+	j.byID = make(map[string]WorkflowJobDefinition, len(value.Content)/2)
+	for i := 0; i+1 < len(value.Content); i += 2 {
+		var id string
+		if err := value.Content[i].Decode(&id); err != nil {
+			return err
+		}
+		var def WorkflowJobDefinition
+		if err := value.Content[i+1].Decode(&def); err != nil {
+			return err
+		}
+		if _, seen := j.byID[id]; !seen {
+			j.order = append(j.order, id)
+		}
+		j.byID[id] = def
+	}
+	return nil
+}
+
+// Len returns the number of jobs.
+func (j workflowJobs) Len() int { return len(j.order) }
+
+// Each calls fn for every job in file order.
+func (j workflowJobs) Each(fn func(id string, def WorkflowJobDefinition)) {
+	for _, id := range j.order {
+		fn(id, j.byID[id])
+	}
 }
 
 // WorkflowJobDefinition represents a job in the workflow YAML
@@ -1642,9 +1683,9 @@ func parseWorkflowNeeds(needs interface{}) []string {
 // prefix is used when parsing reusable workflows to prefix job names
 // callingJobNeeds contains the needs of the calling job (for reusable workflows)
 func (h *Handler) extractJobDependencies(workflowDef *WorkflowDefinition, prefix string, callingJobNeeds []string) []JobDependency {
-	dependencies := make([]JobDependency, 0, len(workflowDef.Jobs))
+	dependencies := make([]JobDependency, 0, workflowDef.Jobs.Len())
 
-	for jobID, jobDef := range workflowDef.Jobs {
+	workflowDef.Jobs.Each(func(jobID string, jobDef WorkflowJobDefinition) {
 		dep := JobDependency{
 			JobID:    jobID,
 			Name:     jobDef.Name,
@@ -1672,7 +1713,7 @@ func (h *Handler) extractJobDependencies(workflowDef *WorkflowDefinition, prefix
 		}
 
 		dependencies = append(dependencies, dep)
-	}
+	})
 
 	return dependencies
 }
@@ -1777,10 +1818,10 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Extract job dependencies, handling reusable workflows
+	// Extract job dependencies in file order, handling reusable workflows
 	allDependencies := []JobDependency{}
 
-	for jobID, jobDef := range workflowDef.Jobs {
+	workflowDef.Jobs.Each(func(jobID string, jobDef WorkflowJobDefinition) {
 		callingJobNeeds := parseWorkflowNeeds(jobDef.Needs)
 		callingJobName := jobDef.Name
 		if callingJobName == "" {
@@ -1802,7 +1843,7 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 			if !ok {
 				log.Warn().Str("uses", jobDef.Uses).Msg("Unsupported reusable workflow reference, adding as single job")
 				allDependencies = append(allDependencies, singleJob)
-				continue
+				return
 			}
 
 			log.Debug().
@@ -1822,14 +1863,14 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 					log.Warn().Err(err).Str("path", reusable.path).Str("owner", reusable.owner).Str("repo", reusable.repo).Msg("Failed to fetch reusable workflow, adding as single job")
 				}
 				allDependencies = append(allDependencies, singleJob)
-				continue
+				return
 			}
 
 			var reusableWorkflowDef WorkflowDefinition
 			if err := yaml.Unmarshal(reusableContent, &reusableWorkflowDef); err != nil {
 				log.Warn().Err(err).Str("path", reusable.path).Msg("Failed to parse reusable workflow YAML")
 				allDependencies = append(allDependencies, singleJob)
-				continue
+				return
 			}
 
 			// Extract jobs from reusable workflow with prefix
@@ -1846,7 +1887,7 @@ func (h *Handler) GetRunWorkflowDefinition(w http.ResponseWriter, r *http.Reques
 				Prefix:   "",
 			})
 		}
-	}
+	})
 
 	_ = json.NewEncoder(w).Encode(allDependencies)
 }

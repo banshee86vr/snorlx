@@ -36,9 +36,30 @@ const glowPulseStyles = `
 }
 `;
 
-// Dagre layout configuration
-const NODE_WIDTH = 320;
-const NODE_HEIGHT = 70;
+// Graph geometry, modelled on the GitHub Actions run graph: one compact row per job (status
+// icon, name, duration), rows of the same stage stacked inside one container, containers laid
+// out left to right by dependency depth with small gaps.
+const NODE_WIDTH = 280;
+const ROW_HEIGHT = 36;
+const ROW_GAP = 4;
+const GROUP_PADDING = 8;
+const GROUP_LABEL_HEIGHT = 22;
+
+const GROUP_NODE_TYPES = new Set(["matrixGroup", "stageGroup"]);
+
+function isGroupNode(node: Node): boolean {
+	return GROUP_NODE_TYPES.has(node.type ?? "");
+}
+
+function nodeSize(node: Node): { width: number; height: number } {
+	if (isGroupNode(node)) {
+		return {
+			width: node.data.width as number,
+			height: node.data.height as number,
+		};
+	}
+	return { width: NODE_WIDTH, height: ROW_HEIGHT };
+}
 
 // Apply dagre layout algorithm to nodes and edges
 function getLayoutedElements(
@@ -51,10 +72,10 @@ function getLayoutedElements(
 
 	dagreGraph.setGraph({
 		rankdir: direction,
-		nodesep: 80, // Vertical spacing between nodes in same rank
-		ranksep: 120, // Horizontal spacing between ranks
-		marginx: 30,
-		marginy: 30,
+		nodesep: 24, // Gap between containers in the same column
+		ranksep: 64, // Gap between dependency columns
+		marginx: 24,
+		marginy: 24,
 	});
 
 	// Separate parent nodes from child nodes
@@ -64,11 +85,7 @@ function getLayoutedElements(
 
 	// Add only parent/standalone nodes to dagre graph
 	for (const node of parentNodes) {
-		const width =
-			node.type === "matrixGroup" ? (node.data.width as number) : NODE_WIDTH;
-		const height =
-			node.type === "matrixGroup" ? (node.data.height as number) : NODE_HEIGHT;
-		dagreGraph.setNode(node.id, { width, height });
+		dagreGraph.setNode(node.id, nodeSize(node));
 	}
 
 	// Add edges to dagre graph (only edges between parent nodes)
@@ -86,10 +103,7 @@ function getLayoutedElements(
 	// Apply the calculated positions to parent nodes
 	const layoutedParentNodes = parentNodes.map((node) => {
 		const nodeWithPosition = dagreGraph.node(node.id);
-		const width =
-			node.type === "matrixGroup" ? (node.data.width as number) : NODE_WIDTH;
-		const height =
-			node.type === "matrixGroup" ? (node.data.height as number) : NODE_HEIGHT;
+		const { width, height } = nodeSize(node);
 
 		return {
 			...node,
@@ -257,19 +271,27 @@ function JobNode({
 	};
 
 	const shortName = displayName || getShortName(job.name);
+	// Rows inside a container share its border; a job alone in its stage is its own card.
+	const inContainer = !!parentId;
 
 	return (
 		<button
 			type="button"
 			onClick={onClick}
+			title={job.name}
 			className={cn(
-				"px-4 py-3 rounded-xl border-2 cursor-pointer transition-all duration-200 w-[320px] relative",
-				"hover:scale-105 hover:shadow-lg",
-				getStatusStyles(),
-				selected && "ring-2 scale-105",
+				"relative flex items-center gap-2 rounded-lg px-2.5 text-left transition-colors duration-150",
+				inContainer
+					? cn(
+							"border border-transparent hover:bg-black/5 dark:hover:bg-white/5",
+							selected && "bg-black/5 ring-1 ring-primary-500/60 dark:bg-white/10",
+						)
+					: cn("border-2 hover:shadow-md", getStatusStyles(), selected && "ring-2"),
 			)}
-			style={
-				selected
+			style={{
+				width: NODE_WIDTH,
+				height: ROW_HEIGHT,
+				...(selected && !inContainer
 					? {
 							animation: "glow-pulse 2s ease-in-out infinite",
 							["--glow-color" as string]: getJobGlowColor(
@@ -277,76 +299,77 @@ function JobNode({
 								job.conclusion,
 							),
 						}
-					: undefined
-			}
+					: {}),
+			}}
 		>
-			<NodeHandles hidden={!!parentId} />
-			<div className="flex items-center gap-2">
-				<JobStatusIcon status={job.status} conclusion={job.conclusion} />
-				<div className="flex-1 min-w-0 text-left">
-					<p
-						className="font-medium text-gray-900 dark:text-gray-100 text-sm truncate"
-						title={job.name}
-					>
-						{shortName}
-					</p>
-					<p className="text-xs text-gray-500 dark:text-gray-400">
-						{formatDuration(job.duration_seconds)}
-					</p>
-				</div>
-			</div>
+			<NodeHandles hidden={inContainer} />
+			<JobStatusIcon status={job.status} conclusion={job.conclusion} />
+			<span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+				{shortName}
+			</span>
+			<span className="shrink-0 text-xs tabular-nums text-gray-500 dark:text-gray-400">
+				{formatDuration(job.duration_seconds)}
+			</span>
 		</button>
 	);
 }
 
-// Custom group node for matrix jobs
-function MatrixGroupNode({
+// Container for a stage (jobs that wait for the same jobs) or a matrix (one job definition
+// expanded into several jobs). Rows are child nodes positioned inside it; edges attach here.
+function GroupNode({
+	type,
 	data,
 }: {
-	data: { label: string; jobs: WorkflowJob[]; width: number; height: number };
+	type?: string;
+	data: { label?: string; jobs: WorkflowJob[]; width: number; height: number };
 }) {
 	const { label, jobs } = data;
 	const { isDark } = useTheme();
+	const isMatrix = type === "matrixGroup";
 
-	// Determine overall status of the group
-	const hasInProgress = jobs.some((j) => j.status === "in_progress");
-	const hasPending = jobs.some(
-		(j) => j.status === "queued" || j.status === "pending",
-	);
-	const allSuccess = jobs.every((j) => j.conclusion === "success");
-	const hasFailed = jobs.some((j) => j.conclusion === "failure");
-
-	const getBorderColor = () => {
-		if (hasInProgress) return "border-blue-500/50";
-		if (hasFailed) return "border-red-500/50";
-		if (allSuccess) return "border-emerald-500/50";
-		if (hasPending) return "border-amber-500/50";
+	// A matrix container reports the aggregate status on its border; a stage container stays
+	// neutral because its rows carry their own status icons.
+	const matrixBorderColor = () => {
+		if (jobs.some((j) => j.status === "in_progress")) return "border-blue-500/50";
+		if (jobs.some((j) => j.conclusion === "failure")) return "border-red-500/50";
+		if (jobs.every((j) => j.conclusion === "success")) return "border-emerald-500/50";
+		if (jobs.some((j) => j.status === "queued" || j.status === "pending")) {
+			return "border-amber-500/50";
+		}
 		return "border-gray-500/50";
 	};
 
 	return (
 		<div
 			className={cn(
-				"rounded-xl border-2 border-dashed p-3 pt-8",
-				isDark ? "bg-slate-800/30" : "bg-gray-100/50",
-				getBorderColor(),
+				"relative rounded-xl",
+				isDark ? "bg-slate-800/40" : "bg-white",
+				isMatrix
+					? cn("border-2 border-dashed", matrixBorderColor())
+					: "border border-gray-300 shadow-xs dark:border-gray-600/70",
 			)}
 			style={{ width: data.width, height: data.height }}
 		>
 			<NodeHandles />
-			<div
-				className={cn(
-					"absolute -top-3 left-3 px-2 py-0.5 rounded-sm text-xs font-medium",
-					isDark ? "bg-slate-800 text-gray-400" : "bg-gray-200 text-gray-600",
-				)}
-			>
-				Matrix: {label}
-			</div>
+			{isMatrix && (
+				<div
+					className={cn(
+						"absolute -top-2.5 left-3 rounded-sm px-2 py-0.5 text-[11px] font-medium",
+						isDark ? "bg-slate-800 text-gray-400" : "bg-gray-200 text-gray-600",
+					)}
+				>
+					Matrix: {label}
+				</div>
+			)}
 		</div>
 	);
 }
 
-const nodeTypes = { jobNode: JobNode, matrixGroup: MatrixGroupNode };
+const nodeTypes = {
+	jobNode: JobNode,
+	matrixGroup: GroupNode,
+	stageGroup: GroupNode,
+};
 
 // Inner component that has access to ReactFlow hooks
 function RunDetailInner() {
@@ -514,6 +537,9 @@ function RunDetailInner() {
 		// Track matrix jobs for grouping
 		const matrixJobBaseNames = new Map<string, string>(); // job name -> base name
 
+		// Position of each job in the workflow file; GitHub lists rows in that order
+		const definitionIndexByJob = new Map<string, number>();
+
 		// Track reusable workflow prefixes for matching
 		const prefixedJobIds = new Map<string, string>(); // job_id -> prefix
 
@@ -571,7 +597,7 @@ function RunDetailInner() {
 			};
 
 			// Build mapping from YAML job_id to actual job name
-			for (const dep of workflowDefinition) {
+			for (const [depIndex, dep] of workflowDefinition.entries()) {
 				const depNameLower = dep.name.toLowerCase();
 				const depJobIdLower = dep.job_id.toLowerCase();
 				const depPrefixLower = dep.prefix?.toLowerCase() || null;
@@ -628,6 +654,9 @@ function RunDetailInner() {
 					}
 
 					dependencyMap.set(matchingJob.name, dep.needs);
+					if (!definitionIndexByJob.has(matchingJob.name)) {
+						definitionIndexByJob.set(matchingJob.name, depIndex);
+					}
 
 					// Track matrix jobs for grouping
 					if (dep.is_matrix) {
@@ -816,60 +845,6 @@ function RunDetailInner() {
 			}
 		}
 
-		// Build a set of jobs that have children (are depended upon by other jobs)
-		const jobsWithChildren = new Set<string>();
-		for (const [jobName, needs] of dependencyMap) {
-			const contextPrefix = getJobPrefix(jobName);
-			for (const needId of needs) {
-				const needName = resolveJobName(needId, contextPrefix);
-				if (needName) {
-					jobsWithChildren.add(needName);
-				}
-			}
-		}
-
-		// Identify orphan jobs (no dependencies AND no children AND not part of a workflow group)
-		// These will be placed in the leftmost column (depth 0), below other jobs
-		const orphanJobs: WorkflowJob[] = [];
-		const connectedJobs: WorkflowJob[] = [];
-
-		for (const job of jobs) {
-			const needs = dependencyMap.get(job.name) || [];
-			const hasChildren = jobsWithChildren.has(job.name);
-			const hasDependencies = needs.length > 0;
-			// A job is "connected" if it's in the dependency map (even with empty deps)
-			// This handles reusable workflow jobs that we couldn't get full info for
-			const isInDependencyMap = dependencyMap.has(job.name);
-
-			if (!hasChildren && !hasDependencies && !isInDependencyMap) {
-				orphanJobs.push(job);
-			} else {
-				connectedJobs.push(job);
-			}
-		}
-
-		// Group connected jobs by depth
-		const groups = new Map<number, WorkflowJob[]>();
-		for (const job of connectedJobs) {
-			const depth = jobDepth.get(job.name) ?? 0;
-			if (!groups.has(depth)) groups.set(depth, []);
-			groups.get(depth)?.push(job);
-		}
-
-		// Sort connected jobs within each group: jobs with children first, then alphabetically
-		for (const [, g] of groups.entries()) {
-			g.sort((a, b) => {
-				const aHasChildren = jobsWithChildren.has(a.name);
-				const bHasChildren = jobsWithChildren.has(b.name);
-				if (aHasChildren && !bHasChildren) return -1;
-				if (!aHasChildren && bHasChildren) return 1;
-				return a.name.localeCompare(b.name);
-			});
-		}
-
-		// Sort orphan jobs alphabetically
-		orphanJobs.sort((a, b) => a.name.localeCompare(b.name));
-
 		// Helper to extract grouping key from job name for MATRIX grouping only
 		// Returns base name for matrix jobs (jobs with "(matrix values)" suffix)
 		// Also handles truncated job names (ending with "...") where the ")" was cut off
@@ -925,7 +900,7 @@ function RunDetailInner() {
 			// Also group jobs by their base name if multiple jobs share the same base
 			// This helps catch matrix jobs even if the pattern detection missed them
 			const potentialMatrixGroups = new Map<string, WorkflowJob[]>();
-			for (const job of connectedJobs) {
+			for (const job of jobs) {
 				// Extract base name (everything before first parenthesis or the whole name)
 				let baseName = job.name;
 				const slashIdx = baseName.indexOf(" / ");
@@ -960,191 +935,145 @@ function RunDetailInner() {
 			}
 		}
 
-		// Group matrix jobs by their base name for visual clustering
-		const matrixGroups = new Map<string, WorkflowJob[]>();
-		const standaloneJobs: WorkflowJob[] = [];
+		// ===== Group jobs the way GitHub draws them =====
+		// A matrix definition becomes one labelled container with a row per expanded job. Other
+		// jobs that sit at the same depth and wait for the same jobs share one plain container; a
+		// job alone in its stage is drawn as a single card. Rows follow the workflow file order.
+		const resolvedNeedsOf = (job: WorkflowJob): string[] => {
+			const contextPrefix = getJobPrefix(job.name);
+			return (dependencyMap.get(job.name) || [])
+				.map((needId) => resolveJobName(needId, contextPrefix) ?? needId)
+				.sort((a, b) => a.localeCompare(b));
+		};
+		const depthOf = (job: WorkflowJob) => jobDepth.get(job.name) ?? 0;
+		const definitionIndexOf = (job: WorkflowJob) =>
+			definitionIndexByJob.get(job.name) ?? Number.MAX_SAFE_INTEGER;
+		const byDefinitionOrder = (a: WorkflowJob, b: WorkflowJob) =>
+			definitionIndexOf(a) - definitionIndexOf(b) || a.name.localeCompare(b.name);
 
-		for (const job of connectedJobs) {
+		const matrixGroups = new Map<string, WorkflowJob[]>();
+		const stageGroups = new Map<string, WorkflowJob[]>();
+		const stageKeyByJob = new Map<number, string>();
+
+		const addToStage = (job: WorkflowJob) => {
+			const stageKey = `${depthOf(job)}|${resolvedNeedsOf(job).join("\u0000")}`;
+			stageKeyByJob.set(job.id, stageKey);
+			if (!stageGroups.has(stageKey)) stageGroups.set(stageKey, []);
+			stageGroups.get(stageKey)!.push(job);
+		};
+
+		for (const job of jobs) {
 			const groupKey = getMatrixGroupKey(job.name);
 			if (groupKey) {
-				if (!matrixGroups.has(groupKey)) {
-					matrixGroups.set(groupKey, []);
-				}
-				matrixGroups.get(groupKey)?.push(job);
+				if (!matrixGroups.has(groupKey)) matrixGroups.set(groupKey, []);
+				matrixGroups.get(groupKey)!.push(job);
 			} else {
-				standaloneJobs.push(job);
+				addToStage(job);
 			}
 		}
 
-		// Keep all matrix groups, even with single items, to show the matrix container
-
-		// Layout nodes
-		const depths = Array.from(groups.keys()).sort((a, b) => a - b);
-		const spacing = { x: 200, y: 90 }; // Minimal x for very short connections
-		const groupSpacing = { x: 380, y: 100 }; // Adjusted for larger groups
-		const startX = 30;
-		const centerY = 100;
-
-		// Track which jobs have been placed (to avoid duplicates)
-		const placedJobs = new Set<number>();
-
-		// First pass: layout standalone jobs and matrix groups by depth
-		let maxY = 0;
-		let groupIdCounter = 0;
-		// Map from groupKey -> group node ID for edge connections
-		const groupKeyToNodeId = new Map<string, string>();
-
-		depths.forEach((depth, col) => {
-			const depthJobs = groups.get(depth) || [];
-			let currentY = centerY;
-
-			// Process jobs at this depth
-			for (const job of depthJobs) {
-				if (placedJobs.has(job.id)) continue;
-
-				const groupKey = getMatrixGroupKey(job.name);
-				const matrixGroup = groupKey ? matrixGroups.get(groupKey) : null;
-
-				if (matrixGroup && matrixGroup.length >= 1) {
-					// Check if all jobs in this matrix group are at the same depth
-					const allSameDepth = matrixGroup.every(
-						(j) => jobDepth.get(j.name) === depth,
-					);
-
-					if (allSameDepth && groupKey) {
-						// Layout matrix group as a cluster
-						const groupJobs = matrixGroup;
-						const innerSpacing = 85; // Vertical spacing between nodes inside group
-						const groupPadding = { top: 45, bottom: 25, left: 15, right: 15 };
-						const groupHeight =
-							groupPadding.top +
-							groupJobs.length * innerSpacing +
-							groupPadding.bottom;
-						const groupWidth = 350; // Larger width for better readability
-						const groupY = currentY;
-
-						// Create group container node
-						const groupNodeId = `group-${groupIdCounter}`;
-						groupKeyToNodeId.set(groupKey, groupNodeId);
-						nodeList.push({
-							id: groupNodeId,
-							type: "matrixGroup",
-							position: {
-								x: startX + col * groupSpacing.x,
-								y: groupY,
-							},
-							data: {
-								label: groupKey,
-								jobs: groupJobs,
-								width: groupWidth,
-								height: groupHeight,
-							},
-							draggable: true,
-							selectable: true,
-							connectable: false,
-						});
-
-						// Layout jobs inside the group (as children of the group node)
-						groupJobs.forEach((gJob, idx) => {
-							placedJobs.add(gJob.id);
-							nodeList.push({
-								id: `job-${gJob.id}`,
-								type: "jobNode",
-								// Position is relative to parent node
-								position: {
-									x: groupPadding.left,
-									y: groupPadding.top + idx * innerSpacing,
-								},
-								parentId: groupNodeId, // Makes this node a child of the group
-								extent: "parent" as const, // Constrain movement within parent
-								data: {
-									job: gJob,
-									selected: false,
-									onClick: () => handleJobClickRef.current(gJob),
-								},
-								draggable: false, // Child nodes move with parent, not independently
-								selectable: true,
-								connectable: false,
-							});
-						});
-
-						currentY = groupY + groupHeight + spacing.y;
-						maxY = Math.max(maxY, currentY);
-						groupIdCounter++;
-					}
-				} else {
-					// Standalone job
-					placedJobs.add(job.id);
-					nodeList.push({
-						id: `job-${job.id}`,
-						type: "jobNode",
-						position: {
-							x: startX + col * groupSpacing.x,
-							y: currentY,
-						},
-						data: {
-							job,
-							selected: false,
-							onClick: () => handleJobClickRef.current(job),
-						},
-						draggable: true,
-						selectable: true,
-						connectable: false,
-					});
-					currentY += spacing.y;
-					maxY = Math.max(maxY, currentY);
-				}
+		// A matrix whose expanded jobs ended up at different depths is a false positive of the
+		// name heuristic: draw those jobs as ordinary stage members instead.
+		for (const [groupKey, groupJobs] of [...matrixGroups]) {
+			const depth = depthOf(groupJobs[0]);
+			if (groupJobs.some((job) => depthOf(job) !== depth)) {
+				matrixGroups.delete(groupKey);
+				groupJobs.forEach(addToStage);
 			}
+		}
+
+		type Placement =
+			| { kind: "container"; id: string; type: "matrixGroup" | "stageGroup"; label?: string; jobs: WorkflowJob[] }
+			| { kind: "single"; job: WorkflowJob };
+		const placements: Array<Placement & { depth: number; order: number }> = [];
+		const groupKeyToNodeId = new Map<string, string>(); // matrix key -> container node id
+		const stageKeyToNodeId = new Map<string, string>(); // stage key -> container node id
+		let containerCounter = 0;
+
+		for (const [groupKey, groupJobs] of matrixGroups) {
+			groupJobs.sort(byDefinitionOrder);
+			const id = `group-${containerCounter++}`;
+			groupKeyToNodeId.set(groupKey, id);
+			placements.push({
+				kind: "container",
+				id,
+				type: "matrixGroup",
+				label: groupKey,
+				jobs: groupJobs,
+				depth: depthOf(groupJobs[0]),
+				order: definitionIndexOf(groupJobs[0]),
+			});
+		}
+		for (const [stageKey, stageJobs] of stageGroups) {
+			stageJobs.sort(byDefinitionOrder);
+			if (stageJobs.length === 1) {
+				placements.push({
+					kind: "single",
+					job: stageJobs[0],
+					depth: depthOf(stageJobs[0]),
+					order: definitionIndexOf(stageJobs[0]),
+				});
+				continue;
+			}
+			const id = `stage-${containerCounter++}`;
+			stageKeyToNodeId.set(stageKey, id);
+			placements.push({
+				kind: "container",
+				id,
+				type: "stageGroup",
+				jobs: stageJobs,
+				depth: depthOf(stageJobs[0]),
+				order: definitionIndexOf(stageJobs[0]),
+			});
+		}
+		// Dagre keeps insertion order for nodes it has no reason to reorder, so emit by depth and
+		// then by workflow file order.
+		placements.sort((a, b) => a.depth - b.depth || a.order - b.order);
+
+		const jobNode = (job: WorkflowJob, parentId?: string, position = { x: 0, y: 0 }): Node => ({
+			id: `job-${job.id}`,
+			type: "jobNode",
+			position,
+			...(parentId ? { parentId, extent: "parent" as const } : {}),
+			data: {
+				job,
+				selected: false,
+				onClick: () => handleJobClickRef.current(job),
+			},
+			draggable: !parentId, // rows move with their container
+			selectable: true,
+			connectable: false,
 		});
 
-		// Second pass: layout any remaining unplaced jobs
-		for (const job of connectedJobs) {
-			if (!placedJobs.has(job.id)) {
-				const depth = jobDepth.get(job.name) ?? 0;
-				placedJobs.add(job.id);
-				maxY += spacing.y;
-				nodeList.push({
-					id: `job-${job.id}`,
-					type: "jobNode",
-					position: {
-						x: startX + depth * groupSpacing.x,
-						y: maxY,
-					},
-					data: {
-						job,
-						selected: false,
-						onClick: () => handleJobClickRef.current(job),
-					},
-					draggable: true,
-					selectable: true,
-					connectable: false,
-				});
+		// Containers get their final position from dagre; rows are placed relative to the container.
+		for (const placement of placements) {
+			if (placement.kind === "single") {
+				nodeList.push(jobNode(placement.job));
+				continue;
 			}
-		}
-
-		// Third pass: layout orphan jobs in the leftmost column, below all other jobs
-		if (orphanJobs.length > 0) {
-			const orphanStartY = maxY + spacing.y;
-
-			orphanJobs.forEach((job, idx) => {
-				if (placedJobs.has(job.id)) return;
-				placedJobs.add(job.id);
-				nodeList.push({
-					id: `job-${job.id}`,
-					type: "jobNode",
-					position: {
-						x: startX,
-						y: orphanStartY + idx * spacing.y,
-					},
-					data: {
-						job,
-						selected: false,
-						onClick: () => handleJobClickRef.current(job),
-					},
-					draggable: true,
-					selectable: true,
-					connectable: false,
-				});
+			const labelHeight = placement.type === "matrixGroup" ? GROUP_LABEL_HEIGHT : 0;
+			const rows = placement.jobs.length;
+			nodeList.push({
+				id: placement.id,
+				type: placement.type,
+				position: { x: 0, y: 0 },
+				data: {
+					label: placement.label,
+					jobs: placement.jobs,
+					width: NODE_WIDTH + GROUP_PADDING * 2,
+					height: GROUP_PADDING * 2 + labelHeight + rows * ROW_HEIGHT + (rows - 1) * ROW_GAP,
+				},
+				draggable: true,
+				selectable: true,
+				connectable: false,
+			});
+			placement.jobs.forEach((job, idx) => {
+				nodeList.push(
+					jobNode(job, placement.id, {
+						x: GROUP_PADDING,
+						y: GROUP_PADDING + labelHeight + idx * (ROW_HEIGHT + ROW_GAP),
+					}),
+				);
 			});
 		}
 
@@ -1202,13 +1131,16 @@ function RunDetailInner() {
 		// Track edges already created to avoid duplicates
 		const createdEdges = new Set<string>();
 
-		// For matrix groups, we want edges to connect to the group container node
-		// This creates a cleaner visualization with edges going to/from the group box
+		// Edges attach to the container a job is drawn in (matrix or stage), like GitHub, and to
+		// the job itself when it is a single card.
 		const getRepresentativeJobId = (job: WorkflowJob): string => {
 			const groupKey = getMatrixGroupKey(job.name);
-			// If this job is part of a matrix group, return the group node ID
 			if (groupKey && groupKeyToNodeId.has(groupKey)) {
 				return groupKeyToNodeId.get(groupKey)!;
+			}
+			const stageKey = stageKeyByJob.get(job.id);
+			if (stageKey && stageKeyToNodeId.has(stageKey)) {
+				return stageKeyToNodeId.get(stageKey)!;
 			}
 			return `job-${job.id}`;
 		};
@@ -1337,7 +1269,7 @@ function RunDetailInner() {
 				};
 			}
 			// Update matrix group nodes with latest job data
-			if (node.type === "matrixGroup" && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
+			if (isGroupNode(node) && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
 				const groupJobs = (nodeData as Record<string, unknown>).jobs as WorkflowJob[];
 				const updatedGroupJobs = groupJobs.map((gj) => jobById.get(gj.id) ?? gj);
 				return {
@@ -1411,7 +1343,7 @@ function RunDetailInner() {
 	const groupIdToJobs = useMemo(() => {
 		const map = new Map<string, WorkflowJob[]>();
 		for (const node of layoutedNodes) {
-			if (node.type === "matrixGroup" && node.data?.jobs) {
+			if (isGroupNode(node) && node.data?.jobs) {
 				map.set(node.id, node.data.jobs as WorkflowJob[]);
 			}
 		}
@@ -1495,7 +1427,7 @@ function RunDetailInner() {
 						return { ...node, data: { ...nodeData, job: latestJob } };
 					}
 				}
-				if (node.type === "matrixGroup" && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
+				if (isGroupNode(node) && nodeData && Array.isArray((nodeData as Record<string, unknown>).jobs)) {
 					const groupJobs = (nodeData as Record<string, unknown>).jobs as WorkflowJob[];
 					const updatedGroupJobs = groupJobs.map((gj) => jobById.get(gj.id) ?? gj);
 					const hasChanges = groupJobs.some((gj, i) => gj.status !== updatedGroupJobs[i].status || gj.conclusion !== updatedGroupJobs[i].conclusion);
