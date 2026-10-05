@@ -1,0 +1,31 @@
+# 0007: Keep workflow runs current with a server-side conditional poller
+
+- Status: Accepted
+- Date: 2026-10-05
+
+## Context
+
+Run status only changed in storage when a user clicked Sync, clicked Refresh on the dashboard, opened a run detail, or when a GitHub webhook arrived. Most deployments have no webhook (it needs a public URL and per-repository setup), so the dashboard polled its own storage every 10 seconds and received the same stale answer until somebody pressed Refresh. That button pulled the latest 30 runs of up to 50 repositories with one unconditional GitHub call each, blocking the request for up to 25 seconds. The run detail page polled GitHub itself every 5 seconds with two calls per open tab, so every extra tab multiplied the GitHub traffic. The WebSocket invalidation also missed its targets: `workflow_job` events invalidated a query key no page used, workflow lists were never invalidated, and every `workflow_run` event refetched the GitHub-backed workflow definition of an open run.
+
+## Decision
+
+The backend owns freshness. A live poller in the `handlers` package runs two passes for the users who are watching: every `RUN_POLL_INTERVAL` (default 10s) it re-reads each queued or in-progress run and its jobs, and every six intervals it lists the newest 20 runs of each visible repository to discover runs started since the last sync. Every GitHub request carries `If-None-Match` with the last ETag; a 304 answer costs no rate-limit budget and writes nothing, and an ETag is remembered only after the matching storage write succeeded, so a failed write is retried on the next pass instead of being masked by a 304. Changes are upserted and pushed to the repository viewers over the existing WebSocket hub as `workflow_run` and `workflow_job` events, the same path a webhook delivery takes.
+
+Watching means a page that is actually visible. The browser reports `document.visibilityState` over the WebSocket as a `presence` message right after connecting and on every change; a connection starts inactive and counts only once it reports a visible page, so a background tab never counts, not even for the instant between connect and its first frame. The poller counts users with at least one visible page, and a page that reports itself visible wakes both loops at once (at most one early pass per five seconds) so the view is fresh when the user comes back. A hidden page stops applying live events and refetches everything once when it is visible again, so background tabs produce neither GitHub nor API traffic. API requests count as presence for 45 seconds only when the caller has no WebSocket that reports presence (API token clients such as MCP, a browser whose socket is down and is polling the API, or a frontend built before presence frames); a browser that reports presence over its socket does not extend the window with its API traffic. Nobody watching means no GitHub traffic.
+
+GitHub is read with the stored token of a watcher who synced the repository. A token GitHub rejects or rate limits rests for the whole pass; a token that gets 403 or 404 for a run or a repository (access revoked after the sync, or a deleted run) is set aside for that run or repository only and the next watcher's token is tried, so one stale grant never blocks the refresh for the others. Other errors are transient and wait for the next pass.
+
+The on-demand `GET /api/pipelines/active?refresh=true` now runs the same conditional passes for the caller instead of the unconditional pull. Webhook `workflow_job` events are persisted and announce the internal run id; `UpsertRun` returns the stored id so events are addressable. The frontend stops polling GitHub: pages invalidate on live events (`lib/liveUpdates.ts`), fall back to polling storage only while the socket is down (React Query pauses that polling while the page is hidden), refetch everything once after a reconnect, and show a Live or Polling badge. The run detail keeps a manual Refresh as an escape hatch and loses the auto-refresh interval control.
+
+## Alternatives considered
+
+- Keep client-driven GitHub polling and only tune intervals. Rejected: traffic scales with open tabs instead of with active runs, and nothing updates the dashboard grid without a click.
+- Webhooks only. Rejected as the sole mechanism: they need a public endpoint and per-repository configuration, deliveries can be missed, and the poller is cheap once requests are conditional. Webhooks stay the preferred source and the poller reconciles around them.
+- An unconditional background sync of every repository on a timer. Rejected: it spends rate-limit budget on repositories nobody is looking at and re-reads completed runs that cannot change.
+- `httpcache` transport for ETags. Rejected: one more dependency with a URL-keyed body cache, while the poller only needs the ETag per resource to know that nothing changed.
+- A separate `poller` package. Rejected for now: the sync orchestration, converters and viewer lookup already live in `handlers`, so the poller reuses them without moving code; a dedicated package can follow if the service layer is extracted.
+- Treat any open WebSocket as "watching". Rejected: a background tab keeps its socket for hours and would keep the poller and the browser refetching for nobody. Closing the socket on every tab switch was also rejected because it causes reconnect churn and loses webhook-pushed events; reporting visibility over the existing socket is cheaper and precise.
+
+## Consequences
+
+The dashboard, runs, workflows and run detail views update on their own while a page is visible, with webhooks or without, and catch up within a pass when a hidden page is shown again. GitHub traffic is bounded by the number of active runs and changed repositories, shared across every visible browser, and zero when nobody is looking. The `presence` message is the only frame a client sends; the server ignores anything else. The backend uses stored user tokens in the background, which ADR 0004 already anticipated; a token rejected or rate limited by GitHub rests until the next pass. Operators can lengthen `RUN_POLL_INTERVAL` or set it to `0` for webhook-only deployments. The discovery pass scans at most 500 repositories per user; repositories beyond that still refresh through the active pass, Sync and webhooks.

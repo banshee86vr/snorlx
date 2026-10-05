@@ -47,17 +47,33 @@ type Handler struct {
 	ghClient *github.Client
 	wsHub    *websocket.Hub
 	scorer   *scorer.Scorer
+	// watchers records recent API activity per user so the live poller only works for people who
+	// are looking at the dashboard.
+	watchers *watchers
+	// etags remembers the GitHub ETag of every polled resource for conditional requests.
+	etags *etagCache
+	// wakeActive and wakeDiscovery make the poll loops run early when a page becomes visible.
+	wakeActive    chan struct{}
+	wakeDiscovery chan struct{}
 }
 
 // New creates a new Handler
 func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsHub *websocket.Hub, sc *scorer.Scorer) *Handler {
-	return &Handler{
-		config:   cfg,
-		storage:  store,
-		ghClient: ghClient,
-		wsHub:    wsHub,
-		scorer:   sc,
+	h := &Handler{
+		config:        cfg,
+		storage:       store,
+		ghClient:      ghClient,
+		wsHub:         wsHub,
+		scorer:        sc,
+		watchers:      newWatchers(),
+		etags:         newETagCache(),
+		wakeActive:    make(chan struct{}, 1),
+		wakeDiscovery: make(chan struct{}, 1),
 	}
+	if wsHub != nil {
+		wsHub.SetActivationListener(h.UserActivated)
+	}
+	return h
 }
 
 // Context key for user
@@ -377,6 +393,7 @@ func (h *Handler) AuthStatus(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if user, scopes, ok := h.authenticateBearer(r); ok {
+			h.noteAPIActivity(user.ID, true)
 			ctx := context.WithValue(r.Context(), userContextKey, user)
 			ctx = context.WithValue(ctx, scopesContextKey, scopes)
 			ctx = context.WithValue(ctx, authMethodContextKey, authMethodBearer)
@@ -405,6 +422,7 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		h.noteAPIActivity(user.ID, false)
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		ctx = context.WithValue(ctx, scopesContextKey, append([]string{}, defaultScopes...))
 		ctx = context.WithValue(ctx, authMethodContextKey, authMethodSession)
@@ -675,7 +693,22 @@ func (h *Handler) processWebhookEvent(eventType string, event interface{}) {
 			log.Debug().Int64("repo_github_id", e.GetRepo().GetID()).Msg("Ignoring workflow_job for unknown repository")
 			return
 		}
-		h.wsHub.SendWorkflowJobUpdate(h.repoViewers(ctx, repo.ID), e.GetWorkflowJob())
+		run, err := h.storage.GetRunByGitHubID(ctx, e.GetWorkflowJob().GetRunID())
+		if err != nil || run == nil {
+			log.Debug().Int64("run_github_id", e.GetWorkflowJob().GetRunID()).Msg("Ignoring workflow_job for unknown run")
+			return
+		}
+		// The run must belong to the repository named in the delivery; a job must never be attached
+		// to a run of another repository.
+		if run.RepoID != repo.ID {
+			log.Warn().Int64("run_github_id", run.GitHubID).Int("run_repo_id", run.RepoID).Int("delivery_repo_id", repo.ID).Msg("Ignoring workflow_job whose run belongs to another repository")
+			return
+		}
+		if _, err := h.storage.UpsertJob(ctx, h.convertWorkflowJob(e.GetWorkflowJob(), run.ID)); err != nil {
+			log.Error().Err(err).Int64("job_id", e.GetWorkflowJob().GetID()).Msg("Failed to save workflow job")
+			return
+		}
+		h.wsHub.SendWorkflowJobUpdate(h.repoViewers(ctx, repo.ID), runJobsEvent{RunID: run.ID, RunGitHubID: run.GitHubID})
 
 	case *gh.DeploymentEvent:
 		log.Info().
@@ -984,38 +1017,15 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 			continue
 		}
 
-		// Build maps of GitHub workflow ID to internal ID, path, name, and deployment flag (for deployment classification)
-		workflowIDMap := make(map[int64]int)
-		workflowPathMap := make(map[int64]string)
-		workflowNameMap := make(map[int64]string)
-		workflowDeploymentMap := make(map[int64]bool)
-
+		savedWorkflows := make([]models.Workflow, 0, len(ghWorkflows))
 		for _, ghWorkflow := range ghWorkflows {
-			workflow := &models.Workflow{
-				GitHubID:             ghWorkflow.GetID(),
-				RepoID:               savedRepo.ID,
-				Name:                 ghWorkflow.GetName(),
-				Path:                 ghWorkflow.GetPath(),
-				State:                ghWorkflow.GetState(),
-				IsDeploymentWorkflow: false, // preserve DB value via UpsertWorkflow RETURNING
-			}
-			if ghWorkflow.BadgeURL != nil {
-				workflow.BadgeURL = ghWorkflow.BadgeURL
-			}
-			if ghWorkflow.HTMLURL != nil {
-				workflow.HTMLURL = ghWorkflow.HTMLURL
-			}
-
-			savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflow)
+			savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflowFromGitHub(ghWorkflow, savedRepo.ID))
 			if err != nil {
 				log.Error().Err(err).Str("workflow", ghWorkflow.GetName()).Msg("Failed to save workflow")
 				continue
 			}
 			syncedWorkflows++
-			workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
-			workflowPathMap[ghWorkflow.GetID()] = ghWorkflow.GetPath()
-			workflowNameMap[ghWorkflow.GetID()] = ghWorkflow.GetName()
-			workflowDeploymentMap[ghWorkflow.GetID()] = savedWorkflow.IsDeploymentWorkflow
+			savedWorkflows = append(savedWorkflows, *savedWorkflow)
 		}
 
 		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
@@ -1025,44 +1035,12 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 			continue
 		}
 
+		workflows := indexWorkflows(savedWorkflows)
 		for _, ghRun := range ghRuns {
-			// Look up the internal workflow ID
-			workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
+			run, ok := h.runFromGitHub(ghRun, savedRepo.ID, workflows)
 			if !ok {
 				continue
 			}
-
-			run := &models.WorkflowRun{
-				GitHubID:   ghRun.GetID(),
-				WorkflowID: workflowID,
-				RepoID:     savedRepo.ID,
-				RunNumber:  ghRun.GetRunNumber(),
-				Name:       ghRun.GetName(),
-				Status:     ghRun.GetStatus(),
-				Event:      ghRun.GetEvent(),
-				Branch:     ghRun.GetHeadBranch(),
-				CommitSHA:  ghRun.GetHeadSHA(),
-				ActorLogin: ghRun.GetActor().GetLogin(),
-				HTMLURL:    ghRun.GetHTMLURL(),
-				StartedAt:  ghRun.GetRunStartedAt().Time,
-			}
-
-			if ghRun.Conclusion != nil {
-				run.Conclusion = ghRun.Conclusion
-			}
-			if ghRun.GetActor() != nil {
-				avatar := ghRun.GetActor().GetAvatarURL()
-				run.ActorAvatar = &avatar
-			}
-			if !ghRun.GetUpdatedAt().IsZero() && ghRun.GetStatus() == "completed" {
-				completedAt := ghRun.GetUpdatedAt().Time
-				run.CompletedAt = &completedAt
-				duration := int(completedAt.Sub(run.StartedAt).Seconds())
-				run.DurationSeconds = &duration
-			}
-
-			run.IsDeployment = workflowDeploymentMap[ghRun.GetWorkflowID()] || isDeploymentRun(workflowNameMap[ghRun.GetWorkflowID()], workflowPathMap[ghRun.GetWorkflowID()], ghRun.GetEvent())
-
 			if _, err := h.storage.UpsertRun(ctx, run); err != nil {
 				log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
 				continue
@@ -1119,37 +1097,15 @@ func (h *Handler) runSyncOneRepo(ctx context.Context, client *gh.Client, repo *m
 		return 0, 0, err
 	}
 
-	workflowIDMap := make(map[int64]int)
-	workflowPathMap := make(map[int64]string)
-	workflowNameMap := make(map[int64]string)
-	workflowDeploymentMap := make(map[int64]bool)
-
+	savedWorkflows := make([]models.Workflow, 0, len(ghWorkflows))
 	for _, ghWorkflow := range ghWorkflows {
-		workflow := &models.Workflow{
-			GitHubID:             ghWorkflow.GetID(),
-			RepoID:               repo.ID,
-			Name:                 ghWorkflow.GetName(),
-			Path:                 ghWorkflow.GetPath(),
-			State:                ghWorkflow.GetState(),
-			IsDeploymentWorkflow: false,
-		}
-		if ghWorkflow.BadgeURL != nil {
-			workflow.BadgeURL = ghWorkflow.BadgeURL
-		}
-		if ghWorkflow.HTMLURL != nil {
-			workflow.HTMLURL = ghWorkflow.HTMLURL
-		}
-
-		savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflow)
+		savedWorkflow, err := h.storage.UpsertWorkflow(ctx, workflowFromGitHub(ghWorkflow, repo.ID))
 		if err != nil {
 			log.Error().Err(err).Str("workflow", ghWorkflow.GetName()).Msg("Failed to save workflow")
 			continue
 		}
 		syncedWorkflows++
-		workflowIDMap[ghWorkflow.GetID()] = savedWorkflow.ID
-		workflowPathMap[ghWorkflow.GetID()] = ghWorkflow.GetPath()
-		workflowNameMap[ghWorkflow.GetID()] = ghWorkflow.GetName()
-		workflowDeploymentMap[ghWorkflow.GetID()] = savedWorkflow.IsDeploymentWorkflow
+		savedWorkflows = append(savedWorkflows, *savedWorkflow)
 	}
 
 	ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
@@ -1157,43 +1113,12 @@ func (h *Handler) runSyncOneRepo(ctx context.Context, client *gh.Client, repo *m
 		return syncedWorkflows, syncedRuns, err
 	}
 
+	workflows := indexWorkflows(savedWorkflows)
 	for _, ghRun := range ghRuns {
-		workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
+		run, ok := h.runFromGitHub(ghRun, repo.ID, workflows)
 		if !ok {
 			continue
 		}
-
-		run := &models.WorkflowRun{
-			GitHubID:   ghRun.GetID(),
-			WorkflowID: workflowID,
-			RepoID:     repo.ID,
-			RunNumber:  ghRun.GetRunNumber(),
-			Name:       ghRun.GetName(),
-			Status:     ghRun.GetStatus(),
-			Event:      ghRun.GetEvent(),
-			Branch:     ghRun.GetHeadBranch(),
-			CommitSHA:  ghRun.GetHeadSHA(),
-			ActorLogin: ghRun.GetActor().GetLogin(),
-			HTMLURL:    ghRun.GetHTMLURL(),
-			StartedAt:  ghRun.GetRunStartedAt().Time,
-		}
-
-		if ghRun.Conclusion != nil {
-			run.Conclusion = ghRun.Conclusion
-		}
-		if ghRun.GetActor() != nil {
-			avatar := ghRun.GetActor().GetAvatarURL()
-			run.ActorAvatar = &avatar
-		}
-		if !ghRun.GetUpdatedAt().IsZero() && ghRun.GetStatus() == "completed" {
-			completedAt := ghRun.GetUpdatedAt().Time
-			run.CompletedAt = &completedAt
-			duration := int(completedAt.Sub(run.StartedAt).Seconds())
-			run.DurationSeconds = &duration
-		}
-
-		run.IsDeployment = workflowDeploymentMap[ghRun.GetWorkflowID()] || isDeploymentRun(workflowNameMap[ghRun.GetWorkflowID()], workflowPathMap[ghRun.GetWorkflowID()], ghRun.GetEvent())
-
 		if _, err := h.storage.UpsertRun(ctx, run); err != nil {
 			log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
 			continue
@@ -1202,6 +1127,25 @@ func (h *Handler) runSyncOneRepo(ctx context.Context, client *gh.Client, repo *m
 	}
 
 	return syncedWorkflows, syncedRuns, nil
+}
+
+// workflowFromGitHub maps a GitHub workflow to the storage model. The deployment flag is left
+// false: UpsertWorkflow keeps the stored value, which the user may have set by hand.
+func workflowFromGitHub(ghWorkflow *gh.Workflow, repoID int) *models.Workflow {
+	workflow := &models.Workflow{
+		GitHubID: ghWorkflow.GetID(),
+		RepoID:   repoID,
+		Name:     ghWorkflow.GetName(),
+		Path:     ghWorkflow.GetPath(),
+		State:    ghWorkflow.GetState(),
+	}
+	if ghWorkflow.BadgeURL != nil {
+		workflow.BadgeURL = ghWorkflow.BadgeURL
+	}
+	if ghWorkflow.HTMLURL != nil {
+		workflow.HTMLURL = ghWorkflow.HTMLURL
+	}
+	return workflow
 }
 
 // SyncRepository performs a light sync for a single repository (workflows + runs only).
@@ -1446,7 +1390,7 @@ func (h *Handler) ListActivePipelines(w http.ResponseWriter, r *http.Request) {
 	}
 	refresh := r.URL.Query().Get("refresh") == "true" || r.URL.Query().Get("refresh") == "1"
 	if refresh {
-		h.pullLatestRunsFromGitHub(r.Context(), user)
+		h.refreshUserRuns(r.Context(), user.ID)
 	}
 
 	runs, err := h.storage.ListActivePipelines(r.Context(), user.ID)
@@ -2084,94 +2028,6 @@ func (h *Handler) getUserFromContext(ctx context.Context) *models.User {
 	return user
 }
 
-// pullLatestRunsFromGitHub fetches the latest workflow runs from GitHub for all known repos
-// and upserts them into storage. This allows newly triggered pipelines to appear without a full sync.
-// Uses a timeout to avoid blocking the request too long.
-func (h *Handler) pullLatestRunsFromGitHub(ctx context.Context, user *models.User) {
-	const pullTimeout = 25 * time.Second
-	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
-	defer cancel()
-
-	token := &oauth2.Token{AccessToken: user.AccessToken}
-	client := h.ghClient.GetUserClient(ctx, token)
-
-	repos, _, err := h.storage.ListRepositories(ctx, user.ID, 1, 50, "")
-	if err != nil || len(repos) == 0 {
-		return
-	}
-
-	for _, repo := range repos {
-		if ctx.Err() != nil {
-			break
-		}
-		owner, repoName, ok := splitFullName(repo.FullName)
-		if !ok {
-			continue
-		}
-
-		workflows, err := h.storage.ListWorkflows(ctx, user.ID, &repo.ID)
-		if err != nil || len(workflows) == 0 {
-			continue
-		}
-
-		workflowIDMap := make(map[int64]int)
-		workflowPathMap := make(map[int64]string)
-		workflowNameMap := make(map[int64]string)
-		workflowDeploymentMap := make(map[int64]bool)
-		for _, wf := range workflows {
-			workflowIDMap[wf.GitHubID] = wf.ID
-			workflowPathMap[wf.GitHubID] = wf.Path
-			workflowNameMap[wf.GitHubID] = wf.Name
-			workflowDeploymentMap[wf.GitHubID] = wf.IsDeploymentWorkflow
-		}
-
-		ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 30)
-		if err != nil {
-			log.Debug().Err(err).Str("repo", repo.FullName).Msg("Failed to fetch workflow runs for refresh")
-			continue
-		}
-
-		for _, ghRun := range ghRuns {
-			workflowID, ok := workflowIDMap[ghRun.GetWorkflowID()]
-			if !ok {
-				continue
-			}
-			run := &models.WorkflowRun{
-				GitHubID:   ghRun.GetID(),
-				WorkflowID: workflowID,
-				RepoID:     repo.ID,
-				RunNumber:  ghRun.GetRunNumber(),
-				Name:       ghRun.GetName(),
-				Status:     ghRun.GetStatus(),
-				Event:      ghRun.GetEvent(),
-				Branch:     ghRun.GetHeadBranch(),
-				CommitSHA:  ghRun.GetHeadSHA(),
-				ActorLogin: ghRun.GetActor().GetLogin(),
-				HTMLURL:    ghRun.GetHTMLURL(),
-				StartedAt:  ghRun.GetRunStartedAt().Time,
-			}
-			if ghRun.Conclusion != nil {
-				run.Conclusion = ghRun.Conclusion
-			}
-			if ghRun.GetActor() != nil {
-				avatar := ghRun.GetActor().GetAvatarURL()
-				run.ActorAvatar = &avatar
-			}
-			if !ghRun.GetUpdatedAt().IsZero() && ghRun.GetStatus() == "completed" {
-				completedAt := ghRun.GetUpdatedAt().Time
-				run.CompletedAt = &completedAt
-				duration := int(completedAt.Sub(run.StartedAt).Seconds())
-				run.DurationSeconds = &duration
-			}
-			run.IsDeployment = workflowDeploymentMap[ghRun.GetWorkflowID()] || isDeploymentRun(workflowNameMap[ghRun.GetWorkflowID()], workflowPathMap[ghRun.GetWorkflowID()], ghRun.GetEvent())
-
-			if _, err := h.storage.UpsertRun(ctx, run); err != nil {
-				log.Debug().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to upsert run during refresh")
-			}
-		}
-	}
-}
-
 // refreshRunFromGitHub fetches the latest run from GitHub, upserts it, and returns the updated run.
 // On any error (repo lookup, GitHub API, upsert) returns the original run and the error.
 func (h *Handler) refreshRunFromGitHub(ctx context.Context, run *models.WorkflowRun, user *models.User) (*models.WorkflowRun, error) {
@@ -2189,18 +2045,52 @@ func (h *Handler) refreshRunFromGitHub(ctx context.Context, run *models.Workflow
 	if err != nil {
 		return run, err
 	}
-	updated := h.convertWorkflowRun(ghRun)
-	updated.RepoID = run.RepoID
-	updated.WorkflowID = run.WorkflowID
-	saved, err := h.storage.UpsertRun(ctx, updated)
+	saved, err := h.storage.UpsertRun(ctx, h.applyGitHubRun(run, ghRun))
 	if err != nil {
 		return run, err
 	}
 	return saved, nil
 }
 
+// applyGitHubRun converts a fresh GitHub payload for a run that is already stored. The internal
+// identifiers and the deployment classification (which knows the workflow path) come from the
+// stored run.
+func (h *Handler) applyGitHubRun(stored *models.WorkflowRun, ghRun *gh.WorkflowRun) *models.WorkflowRun {
+	updated := h.convertWorkflowRun(ghRun)
+	updated.RepoID = stored.RepoID
+	updated.WorkflowID = stored.WorkflowID
+	updated.IsDeployment = stored.IsDeployment
+	return updated
+}
+
+// workflowIndex maps GitHub workflow IDs to the stored workflows of one repository.
+type workflowIndex map[int64]models.Workflow
+
+func indexWorkflows(workflows []models.Workflow) workflowIndex {
+	idx := make(workflowIndex, len(workflows))
+	for _, wf := range workflows {
+		idx[wf.GitHubID] = wf
+	}
+	return idx
+}
+
+// runFromGitHub converts a run listed for a repository. Runs of workflows that are not stored
+// (deleted or never synced) are skipped.
+func (h *Handler) runFromGitHub(ghRun *gh.WorkflowRun, repoID int, workflows workflowIndex) (*models.WorkflowRun, bool) {
+	wf, ok := workflows[ghRun.GetWorkflowID()]
+	if !ok {
+		return nil, false
+	}
+	run := h.convertWorkflowRun(ghRun)
+	run.RepoID = repoID
+	run.WorkflowID = wf.ID
+	run.IsDeployment = wf.IsDeploymentWorkflow || isDeploymentRun(wf.Name, wf.Path, run.Event)
+	return run, true
+}
+
 // convertWorkflowRun maps a GitHub run to the storage model. RepoID and WorkflowID are left for the
-// caller, which knows the internal identifiers.
+// caller, which knows the internal identifiers. Completion fields are set only for completed runs:
+// GitHub updates updated_at on every status change, so it is not a completion time before that.
 func (h *Handler) convertWorkflowRun(run *gh.WorkflowRun) *models.WorkflowRun {
 	result := &models.WorkflowRun{
 		GitHubID:   run.GetID(),
@@ -2222,7 +2112,7 @@ func (h *Handler) convertWorkflowRun(run *gh.WorkflowRun) *models.WorkflowRun {
 		avatar := run.GetActor().GetAvatarURL()
 		result.ActorAvatar = &avatar
 	}
-	if !run.GetUpdatedAt().IsZero() {
+	if !run.GetUpdatedAt().IsZero() && run.GetStatus() == "completed" {
 		completedAt := run.GetUpdatedAt().Time
 		result.CompletedAt = &completedAt
 		duration := int(completedAt.Sub(result.StartedAt).Seconds())

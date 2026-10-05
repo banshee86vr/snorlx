@@ -94,6 +94,14 @@ func main() {
 	defer stopMaintenance()
 	go runSessionCleanup(maintenanceCtx, store)
 
+	// Live poller: keeps active runs current for watching users with conditional GitHub requests
+	if cfg.RunPollInterval > 0 {
+		log.Info().Dur("interval", cfg.RunPollInterval).Msg("Live run poller enabled")
+		go h.RunLivePoller(maintenanceCtx, cfg.RunPollInterval)
+	} else {
+		log.Info().Msg("Live run poller disabled (RUN_POLL_INTERVAL=0); runs update through webhooks and manual refresh")
+	}
+
 	// Setup router
 	r := chi.NewRouter()
 

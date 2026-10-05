@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Play, CheckCircle, XCircle, Clock, Loader2, ExternalLink, Filter, Search, X } from 'lucide-react';
 import { runsApi } from '../services/api';
 import { cn, formatRelativeTime, formatDuration, getStatusColor } from '../lib/utils';
+import { useFallbackRefetchInterval } from '../hooks/useFallbackRefetchInterval';
 import type { RunFilters } from '../types';
 
 export function Runs() {
@@ -13,10 +14,13 @@ export function Runs() {
     conclusion: '',
     branch: '',
   });
+  // Live events invalidate this list; polling only covers a lost WebSocket.
+  const fallbackInterval = useFallbackRefetchInterval(30_000);
 
   const { data, isLoading } = useQuery({
     queryKey: ['runs', filters],
     queryFn: () => runsApi.list(filters),
+    refetchInterval: fallbackInterval,
   });
 
   const handleFilterChange = (key: keyof RunFilters, value: string) => {

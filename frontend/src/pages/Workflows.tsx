@@ -4,13 +4,17 @@ import { Link } from 'react-router-dom';
 import { Workflow, CheckCircle, XCircle, Clock, ExternalLink, Search, X } from 'lucide-react';
 import { workflowsApi } from '../services/api';
 import { cn, formatRelativeTime } from '../lib/utils';
+import { useFallbackRefetchInterval } from '../hooks/useFallbackRefetchInterval';
 
 export function Workflows() {
   const [search, setSearch] = useState('');
+  // The last-run column changes with live run events; polling only covers a lost WebSocket.
+  const fallbackInterval = useFallbackRefetchInterval(30_000);
 
   const { data: workflows, isLoading } = useQuery({
     queryKey: ['workflows'],
     queryFn: () => workflowsApi.list(),
+    refetchInterval: fallbackInterval,
   });
 
   const filteredWorkflows = useMemo(() => {

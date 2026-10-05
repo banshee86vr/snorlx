@@ -48,6 +48,8 @@ backend:
   env:
     LOG_LEVEL: info
     LOG_FORMAT: json
+    # Live poller cadence for active runs (conditional GitHub requests). Minimum 5s, "0" disables.
+    RUN_POLL_INTERVAL: 10s
 
 # Frontend configuration
 frontend:

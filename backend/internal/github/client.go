@@ -413,6 +413,72 @@ func (c *Client) GetWorkflowRun(ctx context.Context, client *github.Client, owne
 	return run, err
 }
 
+// ===== Conditional requests =====
+//
+// GitHub answers 304 Not Modified when the ETag sent in If-None-Match still matches, and such
+// responses do not count against the primary rate limit. The live poller uses these helpers to
+// check many runs cheaply: only resources that actually changed cost budget and bandwidth.
+
+// conditionalGet performs a GET for path, sending etag as If-None-Match when it is not empty.
+// changed is false when GitHub answered 304; the returned ETag is then the one that was sent.
+func conditionalGet[T any](ctx context.Context, client *github.Client, path, etag string) (result *T, newETag string, changed bool, err error) {
+	req, err := client.NewRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+
+	out := new(T)
+	resp, err := client.Do(req, out)
+	if err != nil {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotModified {
+			return nil, etag, false, nil
+		}
+		return nil, "", false, err
+	}
+	return out, resp.Header.Get("ETag"), true, nil
+}
+
+// GetWorkflowRunIfChanged fetches a run unless its ETag still matches etag.
+func (c *Client) GetWorkflowRunIfChanged(ctx context.Context, client *github.Client, owner, repo string, runID int64, etag string) (*github.WorkflowRun, string, bool, error) {
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d", owner, repo, runID)
+	return conditionalGet[github.WorkflowRun](ctx, client, path, etag)
+}
+
+// ListWorkflowJobsIfChanged lists the jobs of a run unless the first page's ETag still matches etag.
+// The ETag covers one page only, so a run with more than one page of jobs is read in full and
+// returns an empty ETag: its later pages can change while the first one does not, and the caller
+// must not send a conditional request for it again.
+func (c *Client) ListWorkflowJobsIfChanged(ctx context.Context, client *github.Client, owner, repo string, runID int64, etag string) ([]*github.WorkflowJob, string, bool, error) {
+	path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/jobs?per_page=100", owner, repo, runID)
+	page, newETag, changed, err := conditionalGet[github.Jobs](ctx, client, path, etag)
+	if err != nil || !changed {
+		return nil, newETag, changed, err
+	}
+	if page.GetTotalCount() <= len(page.Jobs) {
+		return page.Jobs, newETag, true, nil
+	}
+	all, err := c.ListWorkflowJobs(ctx, client, owner, repo, runID)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return all, "", true, nil
+}
+
+// ListRecentWorkflowRunsIfChanged lists the newest perPage runs of a repository unless the ETag
+// still matches etag. Used to discover runs started since the last pass.
+func (c *Client) ListRecentWorkflowRunsIfChanged(ctx context.Context, client *github.Client, owner, repo string, perPage int, etag string) ([]*github.WorkflowRun, string, bool, error) {
+	path := fmt.Sprintf("repos/%s/%s/actions/runs?per_page=%d", owner, repo, perPage)
+	page, newETag, changed, err := conditionalGet[github.WorkflowRuns](ctx, client, path, etag)
+	if err != nil || !changed {
+		return nil, newETag, changed, err
+	}
+	return page.WorkflowRuns, newETag, true, nil
+}
+
 // ListWorkflowJobs lists jobs for a workflow run
 func (c *Client) ListWorkflowJobs(ctx context.Context, client *github.Client, owner, repo string, runID int64) ([]*github.WorkflowJob, error) {
 	var allJobs []*github.WorkflowJob

@@ -3,21 +3,26 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
 import { workflowsApi } from '../services/api';
 import { formatRelativeTime, formatDuration } from '../lib/utils';
+import { useFallbackRefetchInterval } from '../hooks/useFallbackRefetchInterval';
 
 export function WorkflowDetail() {
   const { id } = useParams<{ id: string }>();
   const workflowId = id ? Number(id) : 0;
+  // Live run events invalidate these queries; polling only covers a lost WebSocket.
+  const fallbackInterval = useFallbackRefetchInterval(30_000);
 
   const { data: workflow, isLoading } = useQuery({
     queryKey: ['workflows', id],
     queryFn: () => workflowsApi.get(workflowId),
     enabled: !!id,
+    refetchInterval: fallbackInterval,
   });
 
   const { data: runsData } = useQuery({
     queryKey: ['workflows', id, 'runs'],
     queryFn: () => workflowsApi.getRuns(Number(id)),
     enabled: !!id,
+    refetchInterval: fallbackInterval,
   });
 
   if (isLoading) {

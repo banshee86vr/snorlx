@@ -31,6 +31,8 @@ import { cn, formatRelativeTime, formatDuration, truncate } from "../lib/utils";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "../context/ThemeContext";
+import { useFallbackRefetchInterval } from "../hooks/useFallbackRefetchInterval";
+import { LiveStatus } from "../components/LiveStatus";
 import type { WorkflowRun } from "../types";
 
 export function Dashboard() {
@@ -38,6 +40,9 @@ export function Dashboard() {
 	const queryClient = useQueryClient();
 	const [pipelinesRefreshingFromGitHub, setPipelinesRefreshingFromGitHub] =
 		useState(false);
+	// The backend pushes every change over the WebSocket; these only poll while it is down.
+	const summaryFallbackInterval = useFallbackRefetchInterval(30_000);
+	const pipelinesFallbackInterval = useFallbackRefetchInterval(15_000);
 
 	// Theme-aware chart colors
 	const chartColors = {
@@ -56,7 +61,7 @@ export function Dashboard() {
 	const { data: summary, isLoading: summaryLoading } = useQuery({
 		queryKey: ["dashboard", "summary"],
 		queryFn: dashboardApi.getSummary,
-		refetchInterval: 30000,
+		refetchInterval: summaryFallbackInterval,
 	});
 
 	const { data: trendsData, isLoading: trendsLoading } = useQuery({
@@ -69,7 +74,8 @@ export function Dashboard() {
 		queryFn: () => repositoriesApi.listScores(),
 	});
 
-	// Fetch active pipelines (in_progress + queued) — 10s poll from storage; manual refresh fetches from GitHub
+	// Active pipelines (in_progress + queued). The server-side poller and webhooks keep storage
+	// current and push changes here; the manual refresh forces a GitHub pass right now.
 	const {
 		data: activePipelinesData,
 		dataUpdatedAt,
@@ -84,7 +90,7 @@ export function Dashboard() {
 			const data = (res as { data?: WorkflowRun[] })?.data;
 			return Array.isArray(data) ? data : [];
 		},
-		refetchInterval: 10000,
+		refetchInterval: pipelinesFallbackInterval,
 		refetchOnMount: "always",
 	});
 
@@ -102,6 +108,8 @@ export function Dashboard() {
 			if (Array.isArray(normalized)) {
 				queryClient.setQueryData(["pipelines", "active"], normalized);
 			}
+			// The GitHub pass may have completed runs: counts and recent runs read the same storage.
+			void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
 		} finally {
 			setPipelinesRefreshingFromGitHub(false);
 		}
@@ -220,7 +228,7 @@ export function Dashboard() {
 						/>
 						<StatCard
 							title="Repository Health"
-							value={scores.length > 0 ? `${Math.round(avgScore)}%` : "—"}
+							value={scores.length > 0 ? `${Math.round(avgScore)}%` : "-"}
 							icon={Award}
 							color="info"
 							subtitle={repoHealthSubtitle}
@@ -241,6 +249,7 @@ export function Dashboard() {
 							({activePipelines.length} running or pending)
 						</span>
 					)}
+					<LiveStatus />
 					{dataUpdatedAt > 0 && (
 						<span className="text-xs text-gray-400 dark:text-gray-500">
 							Updated{" "}
@@ -252,7 +261,7 @@ export function Dashboard() {
 						onClick={handleRefreshPipelines}
 						disabled={pipelinesRefetching || pipelinesRefreshingFromGitHub}
 						className="ml-auto inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30 disabled:opacity-50"
-						title="Refresh from GitHub (fetch latest run statuses)"
+						title="Check GitHub now (updates arrive automatically; use this if something looks stale)"
 					>
 						<RefreshCw
 							className={cn(

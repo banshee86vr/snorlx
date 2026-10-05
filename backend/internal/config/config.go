@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // StorageMode defines the storage backend type
@@ -24,6 +25,14 @@ const defaultSessionSecret = "change-me-in-production"
 // minSessionSecretLength is the minimum length accepted outside DEV_MODE. The secret derives the
 // key that encrypts stored GitHub tokens, so a short value weakens that protection.
 const minSessionSecretLength = 32
+
+// defaultRunPollInterval is how often active workflow runs are refreshed from GitHub while
+// somebody is watching the dashboard. Requests are conditional, so unchanged runs cost no
+// rate-limit budget.
+const defaultRunPollInterval = 10 * time.Second
+
+// minRunPollInterval protects the GitHub rate limit from a mistyped RUN_POLL_INTERVAL.
+const minRunPollInterval = 5 * time.Second
 
 // Config holds all application configuration
 type Config struct {
@@ -61,6 +70,10 @@ type Config struct {
 	// Sync Settings
 	SyncLimit int      // Maximum number of repositories to sync (0 = unlimited)
 	SyncRepos []string // Specific repos to sync (empty = all repos)
+
+	// RunPollInterval is the cadence of the live poller that refreshes active workflow runs for
+	// watching users. Zero disables the background poller; webhooks and manual refresh still work.
+	RunPollInterval time.Duration
 }
 
 // Load reads configuration from environment variables
@@ -100,6 +113,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	runPollInterval, err := parseRunPollInterval(os.Getenv("RUN_POLL_INTERVAL"))
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Port:                getEnv("PORT", "8080"),
 		LogLevel:            getEnv("LOG_LEVEL", "info"),
@@ -117,6 +135,7 @@ func Load() (*Config, error) {
 		SessionSecret:       getEnv("SESSION_SECRET", defaultSessionSecret),
 		SyncLimit:           syncLimit,
 		SyncRepos:           splitList(os.Getenv("SYNC_REPOS")),
+		RunPollInterval:     runPollInterval,
 	}
 
 	if !isDevMode {
@@ -187,6 +206,29 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// parseRunPollInterval accepts a Go duration such as 10s or 1m. Empty means the default, "0"
+// disables the poller, and anything shorter than minRunPollInterval is rejected.
+func parseRunPollInterval(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultRunPollInterval, nil
+	}
+	if raw == "0" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("RUN_POLL_INTERVAL must be a duration such as 10s or 1m (0 disables), got %q", raw)
+	}
+	if d == 0 {
+		return 0, nil
+	}
+	if d < minRunPollInterval {
+		return 0, fmt.Errorf("RUN_POLL_INTERVAL must be at least %s or 0 to disable, got %q", minRunPollInterval, raw)
+	}
+	return d, nil
 }
 
 func parseCIDRList(raw string) ([]*net.IPNet, error) {

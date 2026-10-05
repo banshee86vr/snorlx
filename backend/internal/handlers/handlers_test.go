@@ -38,6 +38,16 @@ type mockStorage struct {
 	listJobsForRunFunc    func(ctx context.Context, runID int) ([]models.WorkflowJob, error)
 	upsertJobFunc         func(ctx context.Context, job *models.WorkflowJob) (*models.WorkflowJob, error)
 	pingFunc              func(ctx context.Context) error
+
+	// Live poller hooks
+	listActivePipelinesFunc     func(ctx context.Context, userID int) ([]models.WorkflowRun, error)
+	listRepositoriesFunc        func(ctx context.Context, userID, page, pageSize int, search string) ([]models.Repository, int, error)
+	getUserByIDFunc             func(ctx context.Context, id int) (*models.User, error)
+	listWorkflowsFunc           func(ctx context.Context, userID int, repoID *int) ([]models.Workflow, error)
+	upsertRunFunc               func(ctx context.Context, run *models.WorkflowRun) (*models.WorkflowRun, error)
+	getRunByGitHubIDFunc        func(ctx context.Context, githubID int64) (*models.WorkflowRun, error)
+	listUsersWithRepoAccessFunc func(ctx context.Context, repoID int) ([]int, error)
+	getRepoByGitHubIDFunc       func(ctx context.Context, githubID int64) (*models.Repository, error)
 }
 
 func (m *mockStorage) Close() error   { return nil }
@@ -64,6 +74,9 @@ func (m *mockStorage) UpsertOrganization(ctx context.Context, org *models.Organi
 	return org, nil
 }
 func (m *mockStorage) ListRepositories(ctx context.Context, userID, page, pageSize int, search string) ([]models.Repository, int, error) {
+	if m.listRepositoriesFunc != nil {
+		return m.listRepositoriesFunc(ctx, userID, page, pageSize, search)
+	}
 	return nil, 0, nil
 }
 func (m *mockStorage) GetRepository(ctx context.Context, id int) (*models.Repository, error) {
@@ -82,9 +95,15 @@ func (m *mockStorage) HasRepositoryAccess(ctx context.Context, userID, repoID in
 	return false, nil
 }
 func (m *mockStorage) ListUsersWithRepositoryAccess(ctx context.Context, repoID int) ([]int, error) {
+	if m.listUsersWithRepoAccessFunc != nil {
+		return m.listUsersWithRepoAccessFunc(ctx, repoID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) GetRepositoryByGitHubID(ctx context.Context, githubID int64) (*models.Repository, error) {
+	if m.getRepoByGitHubIDFunc != nil {
+		return m.getRepoByGitHubIDFunc(ctx, githubID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) UpsertRepository(ctx context.Context, repo *models.Repository) (*models.Repository, error) {
@@ -94,6 +113,9 @@ func (m *mockStorage) UpdateRepository(ctx context.Context, id int, repo *models
 	return repo, nil
 }
 func (m *mockStorage) ListWorkflows(ctx context.Context, userID int, repoID *int) ([]models.Workflow, error) {
+	if m.listWorkflowsFunc != nil {
+		return m.listWorkflowsFunc(ctx, userID, repoID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) GetWorkflow(ctx context.Context, id int) (*models.Workflow, error) {
@@ -121,9 +143,15 @@ func (m *mockStorage) GetRun(ctx context.Context, id int) (*models.WorkflowRun, 
 	return nil, errors.New("run not found")
 }
 func (m *mockStorage) GetRunByGitHubID(ctx context.Context, githubID int64) (*models.WorkflowRun, error) {
+	if m.getRunByGitHubIDFunc != nil {
+		return m.getRunByGitHubIDFunc(ctx, githubID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun) (*models.WorkflowRun, error) {
+	if m.upsertRunFunc != nil {
+		return m.upsertRunFunc(ctx, run)
+	}
 	return run, nil
 }
 func (m *mockStorage) ListJobsForRun(ctx context.Context, runID int) ([]models.WorkflowJob, error) {
@@ -151,6 +179,9 @@ func (m *mockStorage) UpsertDeployment(ctx context.Context, deployment *models.D
 	return deployment, nil
 }
 func (m *mockStorage) GetUserByID(ctx context.Context, id int) (*models.User, error) {
+	if m.getUserByIDFunc != nil {
+		return m.getUserByIDFunc(ctx, id)
+	}
 	return nil, nil
 }
 func (m *mockStorage) GetUserByGitHubID(ctx context.Context, githubID int64) (*models.User, error) {
@@ -221,6 +252,9 @@ func (m *mockStorage) BackfillDeploymentRuns(ctx context.Context, userID int) (i
 	return 0, nil
 }
 func (m *mockStorage) ListActivePipelines(ctx context.Context, userID int) ([]models.WorkflowRun, error) {
+	if m.listActivePipelinesFunc != nil {
+		return m.listActivePipelinesFunc(ctx, userID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) UpsertRepositoryScore(ctx context.Context, score *models.RepositoryScore) (*models.RepositoryScore, error) {
@@ -242,8 +276,12 @@ func newTestHandler(store *mockStorage) *Handler {
 		FrontendURL:        "http://localhost:5173",
 	}
 	return &Handler{
-		config:  cfg,
-		storage: store,
+		config:        cfg,
+		storage:       store,
+		watchers:      newWatchers(),
+		etags:         newETagCache(),
+		wakeActive:    make(chan struct{}, 1),
+		wakeDiscovery: make(chan struct{}, 1),
 		// ghClient, wsHub, scorer are nil; only test handlers that don't use them
 	}
 }

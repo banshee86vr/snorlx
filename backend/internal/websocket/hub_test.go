@@ -4,12 +4,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 )
 
 func newTestClient(id string, userID int, hub *Hub) *Client {
 	return &Client{ID: id, UserID: userID, hub: hub, send: make(chan []byte, 10)}
+}
+
+func presenceFrame(active bool) []byte {
+	if active {
+		return []byte(`{"type":"presence","data":{"active":true}}`)
+	}
+	return []byte(`{"type":"presence","data":{"active":false}}`)
 }
 
 func receive(t *testing.T, c *Client) Message {
@@ -292,5 +300,147 @@ func TestClientCount_MultipleClients(t *testing.T) {
 
 	if hub.ClientCount() != 0 {
 		t.Errorf("expected 0 clients after all unregistered, got %d", hub.ClientCount())
+	}
+}
+
+// ===== Presence: ActiveUserIDs / HasConnection =====
+
+func sortedIDs(ids []int) []int {
+	out := append([]int(nil), ids...)
+	sort.Ints(out)
+	return out
+}
+
+func TestActiveUserIDs_DistinctVisibleUsers(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	time.Sleep(10 * time.Millisecond)
+
+	if ids := hub.ActiveUserIDs(); len(ids) != 0 {
+		t.Fatalf("expected no users on an empty hub, got %v", ids)
+	}
+
+	// Two tabs of user 1 and one tab of user 2
+	tabs := []*Client{
+		newTestClient("u1-a", 1, hub),
+		newTestClient("u1-b", 1, hub),
+		newTestClient("u2", 2, hub),
+	}
+	for _, c := range tabs {
+		hub.Register(c)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	// Connected but silent: nobody counts as watching yet, and nobody reports presence.
+	if ids := hub.ActiveUserIDs(); len(ids) != 0 {
+		t.Fatalf("a connection that has not reported a visible page must not be active, got %v", ids)
+	}
+	if hub.ReportsPresence(1) || hub.ReportsPresence(2) {
+		t.Fatal("ReportsPresence must be false before the first presence frame")
+	}
+
+	for _, c := range tabs {
+		c.handleIncoming(presenceFrame(true))
+	}
+	if ids := sortedIDs(hub.ActiveUserIDs()); len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("expected users 1 and 2, got %v", ids)
+	}
+
+	// User 1 hides both tabs: still connected and reporting, no longer active
+	tabs[0].handleIncoming(presenceFrame(false))
+	tabs[1].handleIncoming(presenceFrame(false))
+	if ids := hub.ActiveUserIDs(); len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("expected only user 2 to be active, got %v", ids)
+	}
+	if !hub.ReportsPresence(1) || !hub.ReportsPresence(2) || hub.ReportsPresence(3) {
+		t.Error("ReportsPresence must reflect reporting connections regardless of visibility")
+	}
+
+	// One tab of user 1 becomes visible again
+	tabs[1].handleIncoming(presenceFrame(true))
+	if ids := sortedIDs(hub.ActiveUserIDs()); len(ids) != 2 {
+		t.Errorf("expected user 1 to be active again, got %v", ids)
+	}
+
+	hub.Unregister(tabs[0])
+	hub.Unregister(tabs[1])
+	time.Sleep(20 * time.Millisecond)
+	if ids := hub.ActiveUserIDs(); len(ids) != 1 || ids[0] != 2 {
+		t.Errorf("expected only user 2 after user 1 closed both tabs, got %v", ids)
+	}
+	if hub.ReportsPresence(1) {
+		t.Error("user 1 closed every connection")
+	}
+}
+
+func TestActivationListener_FiresOnFirstVisibleReportAndOnReturn(t *testing.T) {
+	hub := NewHub()
+	activated := make(chan int, 8)
+	hub.SetActivationListener(func(userID int) { activated <- userID })
+	go hub.Run()
+	time.Sleep(10 * time.Millisecond)
+
+	client := newTestClient("u7", 7, hub)
+	hub.Register(client)
+	select {
+	case id := <-activated:
+		t.Fatalf("connecting alone must not activate, got %d", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	client.handleIncoming(presenceFrame(true))
+	select {
+	case id := <-activated:
+		if id != 7 {
+			t.Fatalf("expected activation for user 7, got %d", id)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an activation when the page reports itself visible")
+	}
+
+	client.handleIncoming(presenceFrame(false))
+	client.handleIncoming(presenceFrame(false))
+	select {
+	case id := <-activated:
+		t.Fatalf("hiding the page must not activate, got %d", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	client.handleIncoming(presenceFrame(true))
+	select {
+	case id := <-activated:
+		if id != 7 {
+			t.Fatalf("expected activation for user 7, got %d", id)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected an activation when the page becomes visible again")
+	}
+
+	// Already active: no duplicate signal
+	client.handleIncoming(presenceFrame(true))
+	select {
+	case id := <-activated:
+		t.Fatalf("a page that stays visible must not re-activate, got %d", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestHandleIncoming_IgnoresUnknownAndMalformed(t *testing.T) {
+	hub := NewHub()
+	client := newTestClient("u1", 1, hub)
+	client.handleIncoming(presenceFrame(true))
+
+	client.handleIncoming([]byte(`not json`))
+	client.handleIncoming([]byte(`{"type":"ping"}`))
+	client.handleIncoming([]byte(`{"type":"presence","data":"nope"}`))
+
+	if !client.Active() {
+		t.Error("unknown or malformed messages must not change presence")
+	}
+
+	silent := newTestClient("u2", 2, hub)
+	silent.handleIncoming([]byte(`{"type":"ping"}`))
+	if silent.Active() || silent.reported.Load() {
+		t.Error("a message that is not a presence frame must not count as a presence report")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -45,6 +46,14 @@ type Message struct {
 	Data interface{} `json:"data"`
 }
 
+// presenceMessageType is the only message a client sends: whether its page is visible. The server
+// polls GitHub only for users with at least one visible page.
+const presenceMessageType = "presence"
+
+type presencePayload struct {
+	Active bool `json:"active"`
+}
+
 // envelope is a serialized message addressed to a set of users.
 type envelope struct {
 	payload    []byte
@@ -58,6 +67,12 @@ type Client struct {
 	hub    *Hub
 	conn   *websocket.Conn
 	send   chan []byte
+	// active is true while the client's page is visible. A new connection starts inactive and
+	// counts as watching only once the browser reports a visible page.
+	active atomic.Bool
+	// reported is set after the first presence frame: this client tells the server about its
+	// visibility, so its API traffic is not needed as a presence signal.
+	reported atomic.Bool
 }
 
 // Hub manages WebSocket client connections. Every message is addressed to explicit user IDs so a
@@ -68,6 +83,9 @@ type Hub struct {
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
+
+	activationMu sync.RWMutex
+	onActivated  func(userID int)
 }
 
 // NewHub creates a new WebSocket hub
@@ -77,6 +95,23 @@ func NewHub() *Hub {
 		outbox:     make(chan envelope, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+	}
+}
+
+// SetActivationListener registers fn, called whenever a page of a user reports that it became
+// visible. fn must not block.
+func (h *Hub) SetActivationListener(fn func(userID int)) {
+	h.activationMu.Lock()
+	defer h.activationMu.Unlock()
+	h.onActivated = fn
+}
+
+func (h *Hub) notifyActivated(userID int) {
+	h.activationMu.RLock()
+	fn := h.onActivated
+	h.activationMu.RUnlock()
+	if fn != nil {
+		fn(userID)
 	}
 }
 
@@ -236,7 +271,41 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
-// NewClient creates a new WebSocket client
+// ActiveUserIDs returns the distinct users with at least one connection whose page is visible.
+func (h *Hub) ActiveUserIDs() []int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	seen := make(map[int]struct{}, len(h.clients))
+	ids := make([]int, 0, len(h.clients))
+	for client := range h.clients {
+		if !client.active.Load() {
+			continue
+		}
+		if _, ok := seen[client.UserID]; ok {
+			continue
+		}
+		seen[client.UserID] = struct{}{}
+		ids = append(ids, client.UserID)
+	}
+	return ids
+}
+
+// ReportsPresence reports whether userID has at least one open connection that has told the
+// server about its page visibility. Such a user is tracked through presence frames, visible or
+// not; a user without one (older client, API tool) is tracked through API activity instead.
+func (h *Hub) ReportsPresence(userID int) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.clients {
+		if client.UserID == userID && client.reported.Load() {
+			return true
+		}
+	}
+	return false
+}
+
+// NewClient creates a new WebSocket client. It starts inactive until the browser reports a
+// visible page, so a background tab never counts as watching.
 func NewClient(id string, userID int, hub *Hub, conn *websocket.Conn) *Client {
 	return &Client{
 		ID:     id,
@@ -244,6 +313,42 @@ func NewClient(id string, userID int, hub *Hub, conn *websocket.Conn) *Client {
 		hub:    hub,
 		conn:   conn,
 		send:   make(chan []byte, 256),
+	}
+}
+
+// Active reports whether the client's page is visible.
+func (c *Client) Active() bool {
+	return c.active.Load()
+}
+
+// handleIncoming applies a message sent by the client. Only presence is understood; anything else
+// is logged and ignored.
+func (c *Client) handleIncoming(raw []byte) {
+	var msg struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	if msg.Type != presenceMessageType {
+		log.Debug().Str("client_id", c.ID).Str("type", msg.Type).Msg("Ignoring WebSocket message")
+		return
+	}
+	var presence presencePayload
+	if err := json.Unmarshal(msg.Data, &presence); err != nil {
+		return
+	}
+	c.ApplyPresence(presence.Active)
+}
+
+// ApplyPresence records whether the client's page is visible and tells the hub when it became
+// visible (first report included).
+func (c *Client) ApplyPresence(active bool) {
+	c.reported.Store(true)
+	wasActive := c.active.Swap(active)
+	if active && !wasActive {
+		c.hub.notifyActivated(c.UserID)
 	}
 }
 
@@ -269,11 +374,7 @@ func (c *Client) ReadPump() {
 			}
 			break
 		}
-
-		var msg Message
-		if err := json.Unmarshal(message, &msg); err == nil {
-			log.Debug().Str("client_id", c.ID).Str("type", msg.Type).Msg("Received WebSocket message")
-		}
+		c.handleIncoming(message)
 	}
 }
 

@@ -10,7 +10,7 @@ A comprehensive, self-hosted dashboard that provides centralized visibility over
 
 - **Centralized Visibility**: Single pane of glass for all workflow runs across repositories
 - **Repository Scoring**: Grade repos with gold/silver/bronze tiers across Security, Testing, CI/CD, Documentation, Code Quality, Maintenance, and Community
-- **Real-time Updates**: Live pipeline status via WebSocket
+- **Real-time Updates**: Live pipeline status via WebSocket, fed by webhooks and a server-side poller that uses conditional GitHub requests
 - **GitHub OAuth**: Sign in with GitHub; no GitHub App setup required
 - **Cost Tracking**: Per-workflow and per-repository cost analysis
 - **Multi-repository Support**: Monitor workflows across multiple repos and organizations
@@ -298,15 +298,21 @@ The app requests these OAuth scopes:
 - `repo` - Access repositories (for workflow data)
 - `read:org` - Read organization membership
 
+### Keeping runs up to date
+
+Runs update on their own while somebody has a page visible. The browser reports its visibility over the WebSocket, and the backend runs a live poller for users with a visible page: every `RUN_POLL_INTERVAL` (default `10s`) it re-reads each queued or in-progress run and its jobs, and every six intervals it lists the newest runs of every visible repository to pick up runs started since the last sync. Every request is conditional (`If-None-Match`), so a resource that did not change answers `304`, costs no GitHub rate-limit budget and writes nothing. Changes are pushed to the browser over the WebSocket; a page that becomes visible again triggers a pass right away and refetches what it missed. While the socket is down, pages poll the backend (never GitHub) until it reconnects, and those requests count as presence for 45 seconds (the same applies to API token clients such as MCP). Background tabs and closed browsers mean no GitHub traffic. The **Refresh** buttons stay as an escape hatch: they run the same conditional passes right away. See [ADR 0007](docs/adr/0007-server-side-live-run-polling.md).
+
 ### Optional: Webhooks
 
-For real-time updates via webhooks, configure a webhook in your repository/organization settings:
+Webhooks deliver changes the instant GitHub reports them and let the poller answer `304` for everything it checks. Configure one in your repository or organization settings:
 
 1. Go to Repository → Settings → Webhooks → Add webhook
 2. **Payload URL**: `https://your-domain.com/api/webhooks/github`
 3. **Content type**: `application/json`
 4. **Secret**: Generate a secure secret and add to `.env` as `GITHUB_WEBHOOK_SECRET`
 5. Select events: `Workflow runs`, `Workflow jobs`, `Deployments`
+
+With webhooks on every repository you can lengthen `RUN_POLL_INTERVAL` or set it to `0` to rely on webhooks and manual refresh only.
 
 ## Configuration
 
@@ -347,10 +353,11 @@ For real-time updates via webhooks, configure a webhook in your repository/organ
 
 #### Sync Configuration
 
-| Variable     | Required | Default     | Description                                  |
-| ------------ | -------- | ----------- | -------------------------------------------- |
-| `SYNC_LIMIT` | No       | `0` (all)   | Limit number of repos to sync                |
-| `SYNC_REPOS` | No       | -           | Comma-separated list of specific repos to sync |
+| Variable            | Required | Default     | Description                                                                                                   |
+| ------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `SYNC_LIMIT`        | No       | `0` (all)   | Limit number of repos to sync                                                                                 |
+| `SYNC_REPOS`        | No       | -           | Comma-separated list of specific repos to sync                                                                |
+| `RUN_POLL_INTERVAL` | No       | `10s`       | How often active runs are refreshed from GitHub for watching users (conditional requests). Minimum `5s`, `0` disables the poller |
 
 ## API Endpoints
 
@@ -410,7 +417,7 @@ All `/api` routes below (except `/api/auth/*` and the webhook receiver) require 
 
 ### Real-time
 
-- `GET /ws` - WebSocket endpoint for real-time updates
+- `GET /ws` - WebSocket endpoint for real-time updates. Server events: `workflow_run` (a stored run changed or appeared), `workflow_job` (`{run_id, run_github_id}`: the jobs of that run changed), `deployment`, `sync:*`. The client sends `presence` (`{"active": bool}`) with its page visibility; the live poller works only for users with a visible page
 
 ### Webhooks
 

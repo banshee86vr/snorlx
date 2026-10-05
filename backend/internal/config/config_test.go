@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 )
 
 func TestLoad_DevMode_DefaultCredentials(t *testing.T) {
@@ -385,5 +386,44 @@ func TestLoad_LoginAllowlist(t *testing.T) {
 	}
 	if !cfg.LoginRestricted() || len(cfg.AllowedGitHubOrgs) != 1 || cfg.AllowedGitHubOrgs[0] != "acme" {
 		t.Errorf("unexpected allowlist: %v", cfg.AllowedGitHubOrgs)
+	}
+}
+
+func TestLoad_RunPollInterval(t *testing.T) {
+	t.Setenv("DEV_MODE", "true")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "")
+
+	cases := []struct {
+		name    string
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "default", raw: "", want: defaultRunPollInterval},
+		{name: "custom", raw: "30s", want: 30 * time.Second},
+		{name: "minutes", raw: "1m", want: time.Minute},
+		{name: "disabled", raw: "0", want: 0},
+		{name: "disabled with unit", raw: "0s", want: 0},
+		{name: "too short", raw: "1s", wantErr: true},
+		{name: "negative", raw: "-10s", wantErr: true},
+		{name: "not a duration", raw: "soon", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("RUN_POLL_INTERVAL", tc.raw)
+			cfg, err := Load()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for RUN_POLL_INTERVAL=%q", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.RunPollInterval != tc.want {
+				t.Errorf("RunPollInterval = %s, want %s", cfg.RunPollInterval, tc.want)
+			}
+		})
 	}
 }

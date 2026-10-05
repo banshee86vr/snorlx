@@ -44,6 +44,8 @@ spec:
               value: "{{ .Values.backend.env.LOG_LEVEL }}"
             - name: LOG_FORMAT
               value: "{{ .Values.backend.env.LOG_FORMAT }}"
+            - name: RUN_POLL_INTERVAL
+              value: "{{ .Values.backend.env.RUN_POLL_INTERVAL }}"
             - name: STORAGE_MODE
               value: database
             - name: FRONTEND_URL

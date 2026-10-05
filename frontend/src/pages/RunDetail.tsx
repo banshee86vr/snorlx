@@ -177,7 +177,6 @@ import {
 	Play,
 	ChevronDown,
 	RotateCw,
-	Pause,
 	Circle,
 	AlertTriangle,
 	LayoutGrid,
@@ -190,7 +189,9 @@ import {
 	getStatusColor,
 } from "../lib/utils";
 import { useTheme } from "../context/ThemeContext";
-import type { WorkflowJob } from "../types";
+import { useSocket } from "../context/SocketContext";
+import { LiveStatus } from "../components/LiveStatus";
+import type { WorkflowJob, WorkflowRun } from "../types";
 
 // React Flow only draws an edge when both ends have a Handle to attach to.
 // Jobs nested in a matrix box receive their edges on the box, so their own
@@ -355,33 +356,17 @@ function RunDetailInner() {
 	const { isDark } = useTheme();
 	const [selectedJob, setSelectedJob] = useState<WorkflowJob | null>(null);
 	const [stepsExpanded, setStepsExpanded] = useState(true);
-	const [autoRefresh, setAutoRefresh] = useState(false);
-	const [refreshInterval, setRefreshInterval] = useState(15); // seconds
-	const [intervalDropdownOpen, setIntervalDropdownOpen] = useState(false);
-	const intervalDropdownRef = useRef<HTMLDivElement>(null);
 	const [cancelError, setCancelError] = useState<string | null>(null);
 	const [rerunError, setRerunError] = useState<string | null>(null);
+	const { isConnected } = useSocket();
 
-	// Close dropdown when clicking outside
-	useEffect(() => {
-		function handleClickOutside(event: MouseEvent) {
-			if (
-				intervalDropdownRef.current &&
-				!intervalDropdownRef.current.contains(event.target as HTMLElement)
-			) {
-				setIntervalDropdownOpen(false);
-			}
-		}
-		document.addEventListener("mousedown", handleClickOutside);
-		return () => document.removeEventListener("mousedown", handleClickOutside);
-	}, []);
-
-	const intervalOptions = [
-		{ value: 15, label: "15s" },
-		{ value: 30, label: "30s" },
-		{ value: 60, label: "1m" },
-		{ value: 300, label: "5m" },
-	];
+	// The backend polls GitHub for active runs and pushes changes over the WebSocket. While the
+	// socket is down, an active run re-reads local storage (never GitHub) every 10 seconds.
+	const fallbackIntervalFor = useCallback(
+		(status: string | undefined) =>
+			!isConnected && (status === "in_progress" || status === "queued") ? 10_000 : false,
+		[isConnected],
+	);
 
 	const {
 		data: run,
@@ -392,6 +377,7 @@ function RunDetailInner() {
 		queryFn: () => runsApi.get(Number(id)),
 		enabled: !!id,
 		staleTime: 0,
+		refetchInterval: (query) => fallbackIntervalFor(query.state.data?.status),
 	});
 
 	const {
@@ -402,10 +388,11 @@ function RunDetailInner() {
 		queryFn: () => runsApi.getJobs(Number(id)),
 		enabled: !!id,
 		staleTime: 0,
+		refetchInterval: () => fallbackIntervalFor(run?.status),
 	});
 
-	// Fetch run + jobs from GitHub, update cache directly
-	const refreshFromGitHub = useCallback(async () => {
+	// Manual escape hatch: read run + jobs from GitHub right now and update the cache directly
+	const refreshFromGitHub = useCallback(async (): Promise<WorkflowRun> => {
 		const numId = Number(id);
 		const [freshRun, freshJobs] = await Promise.all([
 			runsApi.get(numId, { refresh: true }),
@@ -415,18 +402,6 @@ function RunDetailInner() {
 		queryClient.setQueryData(["runs", id, "jobs"], freshJobs);
 		return freshRun;
 	}, [id, queryClient]);
-
-	// Poll from GitHub when run is active or auto-refresh is enabled
-	useEffect(() => {
-		if (!run || !id) return;
-		const isActive = run.status === "in_progress" || run.status === "queued";
-		const ms = isActive ? 5000 : autoRefresh ? refreshInterval * 1000 : 0;
-		if (!ms) return;
-		const t = setInterval(() => {
-			refreshFromGitHub().catch(() => {});
-		}, ms);
-		return () => clearInterval(t);
-	}, [run, run?.status, autoRefresh, refreshInterval, id, refreshFromGitHub]);
 
 	// Fetch workflow definition to get job dependencies (needs).
 	// Jobs usually come from the local cache before this GitHub call returns, so
@@ -451,7 +426,6 @@ function RunDetailInner() {
 			!!id && run?.conclusion === "failure" && (!jobs || jobs.length === 0),
 	});
 
-	// Manual refresh: fetch run + jobs from GitHub, update cache
 	const refreshRunMutation = useMutation({
 		mutationFn: () => refreshFromGitHub(),
 	});
@@ -1666,13 +1640,15 @@ function RunDetailInner() {
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
-						{/* Refresh button */}
+						{isRunning && <LiveStatus />}
+
+						{/* Manual check: updates arrive on their own; this forces a GitHub read now */}
 						<button
 							type="button"
 							onClick={handleRefresh}
 							disabled={isRefetching || refreshRunMutation.isPending}
 							className="btn-secondary flex items-center gap-2"
-							title="Refresh run data from GitHub"
+							title="Check GitHub now (updates arrive automatically; use this if something looks stale)"
 						>
 							<RotateCw
 								className={cn(
@@ -1682,78 +1658,6 @@ function RunDetailInner() {
 							/>
 							Refresh
 						</button>
-
-						{/* Auto-refresh split button */}
-						<div ref={intervalDropdownRef} className="relative flex">
-							{/* Play/Pause button */}
-							<button
-								type="button"
-								onClick={() => setAutoRefresh(!autoRefresh)}
-								className={cn(
-									"px-3 py-2 flex items-center justify-center rounded-l-lg border border-r-0 transition-all",
-									autoRefresh
-										? "bg-primary-500 border-primary-500 text-white hover:bg-primary-600"
-										: "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700",
-								)}
-								title={
-									autoRefresh ? "Disable auto-refresh" : "Enable auto-refresh"
-								}
-							>
-								{autoRefresh ? (
-									<Pause className="w-4 h-4 animate-pulse" />
-								) : (
-									<Play className="w-4 h-4" />
-								)}
-							</button>
-							{/* Interval dropdown trigger */}
-							<button
-								type="button"
-								onClick={() => setIntervalDropdownOpen(!intervalDropdownOpen)}
-								className={cn(
-									"px-2 py-2 text-sm flex items-center justify-between gap-1 rounded-r-lg border transition-colors w-[60px]",
-									autoRefresh
-										? "bg-primary-500 border-primary-500 text-white hover:bg-primary-600"
-										: "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700",
-								)}
-								title="Auto-refresh interval"
-							>
-								<span>
-									{
-										intervalOptions.find((o) => o.value === refreshInterval)
-											?.label
-									}
-								</span>
-								<ChevronDown
-									className={cn(
-										"w-3 h-3 shrink-0 transition-transform",
-										intervalDropdownOpen && "rotate-180",
-									)}
-								/>
-							</button>
-							{/* Dropdown menu */}
-							{intervalDropdownOpen && (
-								<div className="absolute top-full right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg py-1 z-50 min-w-[80px]">
-									{intervalOptions.map((option) => (
-										<button
-											key={option.value}
-											type="button"
-											onClick={() => {
-												setRefreshInterval(option.value);
-												setIntervalDropdownOpen(false);
-											}}
-											className={cn(
-												"w-full px-3 py-2 text-left text-sm transition-colors",
-												refreshInterval === option.value
-													? "bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 font-medium"
-													: "text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700",
-											)}
-										>
-											{option.label}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
 
 						{isRunning && (
 							<button

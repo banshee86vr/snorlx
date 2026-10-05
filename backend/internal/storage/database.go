@@ -820,8 +820,10 @@ func (d *DatabaseStorage) GetRunByGitHubID(ctx context.Context, githubID int64) 
 	return &run, nil
 }
 
+// UpsertRun inserts or updates a run and fills run.ID and run.CreatedAt from the stored row, so
+// callers can address the run in WebSocket events and caches.
 func (d *DatabaseStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun) (*models.WorkflowRun, error) {
-	_, err := d.pool.Exec(ctx, `
+	err := d.pool.QueryRow(ctx, `
 		INSERT INTO workflow_runs (
 			github_id, workflow_id, repo_id, run_number, name, status, conclusion,
 			event, branch, commit_sha, commit_message, actor_login, actor_avatar,
@@ -834,12 +836,16 @@ func (d *DatabaseStorage) UpsertRun(ctx context.Context, run *models.WorkflowRun
 			duration_seconds = EXCLUDED.duration_seconds,
 			commit_timestamp = COALESCE(EXCLUDED.commit_timestamp, workflow_runs.commit_timestamp),
 			is_deployment = EXCLUDED.is_deployment
+		RETURNING id, created_at
 	`,
 		run.GitHubID, run.WorkflowID, run.RepoID, run.RunNumber, run.Name, run.Status, run.Conclusion,
 		run.Event, run.Branch, run.CommitSHA, run.CommitMessage, run.ActorLogin, run.ActorAvatar,
 		run.HTMLURL, run.StartedAt, run.CompletedAt, run.DurationSeconds, run.CommitTimestamp, run.IsDeployment, run.Environment,
-	)
-	return run, err
+	).Scan(&run.ID, &run.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return run, nil
 }
 
 // ===== Workflow Jobs =====
