@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0](https://github.com/banshee86vr/snorlx/compare/v1.0.1...v2.0.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* require per-user repository sync, an https public origin and new deployment values
+
+### Bug Fixes
+
+* require per-user repository sync, an https public origin and new deployment values ([9c7d4a5](https://github.com/banshee86vr/snorlx/commit/9c7d4a534972bfbde51fc0296b10ea72fe91b961))
+* update Docker and environment configurations for improved security and functionality ([ee46c8f](https://github.com/banshee86vr/snorlx/commit/ee46c8f95b28cdb62a2b6834a8afe68d355506f2))
+
 ## [1.0.1](https://github.com/banshee86vr/snorlx/compare/v1.0.0...v1.0.1) (2026-10-05)
 
 
