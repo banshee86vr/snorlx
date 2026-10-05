@@ -3,7 +3,7 @@ name: snorlx
 description: CI/CD Dashboard for GitHub Actions with DevOps metrics
 type: application
 version: 1.0.0
-appVersion: "1.0.0"
+appVersion: 1.0.0
 maintainers:
   - name: banshee86vr
 keywords:
@@ -15,4 +15,3 @@ keywords:
 home: https://github.com/banshee86vr/snorlx
 sources:
   - https://github.com/banshee86vr/snorlx
-
