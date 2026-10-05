@@ -269,6 +269,20 @@ func TestLoad_ProductionMode_DatabaseModeRequiresURL(t *testing.T) {
 	}
 }
 
+func TestLoad_DatabaseURL_TrimsSurroundingSpace(t *testing.T) {
+	setProdEnv(t)
+	t.Setenv("STORAGE_MODE", "database")
+	t.Setenv("DATABASE_URL", "\npostgresql://postgres:secret@db:5432/snorlx?sslmode=disable\n")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DatabaseURL != "postgresql://postgres:secret@db:5432/snorlx?sslmode=disable" {
+		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
+	}
+}
+
 func TestLoad_FrontendURL_NormalizedToOrigin(t *testing.T) {
 	t.Setenv("DEV_MODE", "true")
 	t.Setenv("FRONTEND_URL", "HTTPS://Dash.Example.com/")

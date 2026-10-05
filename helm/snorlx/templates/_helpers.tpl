@@ -92,13 +92,15 @@ Name of the release Secret
 
 {{/*
 Database URL. The password is injected from the Secret through $(POSTGRES_PASSWORD).
+The actions trim surrounding whitespace: a leading newline makes pgx treat the value as a
+keyword string and fall back to a local socket instead of the database Service.
 */}}
 {{- define "snorlx.databaseUrl" -}}
-{{- if .Values.database.internal }}
+{{- if .Values.database.internal -}}
 postgresql://postgres:$(POSTGRES_PASSWORD)@{{ include "snorlx.fullname" . }}-db:5432/snorlx?sslmode=disable
-{{- else }}
-{{- .Values.database.externalUrl }}
-{{- end }}
+{{- else -}}
+{{- .Values.database.externalUrl -}}
+{{- end -}}
 {{- end }}
 
 {{/*

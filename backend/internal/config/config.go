@@ -107,7 +107,7 @@ func Load() (*Config, error) {
 		CookieSecure:        cookieSecure,
 		TrustedProxyCIDRs:   trustedProxies,
 		StorageMode:         storageMode,
-		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		GitHubClientID:      os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:  os.Getenv("GITHUB_CLIENT_SECRET"),
 		GitHubBaseURL:       os.Getenv("GITHUB_BASE_URL"),
