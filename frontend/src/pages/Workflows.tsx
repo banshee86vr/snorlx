@@ -33,127 +33,168 @@ export function Workflows() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Workflows</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
+    <div className="min-w-0 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl dark:text-gray-100">Workflows</h1>
+          <p className="mt-1 text-gray-500 dark:text-gray-400">
             All GitHub Actions workflows across your repositories
           </p>
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <div className="relative w-full sm:w-72 sm:shrink-0">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search workflows..."
-            className="w-full pl-10 pr-10 py-2 text-sm rounded-lg border border-gray-300 bg-white focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-hidden dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-10 text-sm focus:border-primary-500 focus:outline-hidden focus:ring-2 focus:ring-primary-500/20 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           />
           {search && (
             <button
               type="button"
               onClick={() => setSearch('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              aria-label="Clear search"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>
       </div>
 
-      <div className="card">
-        <div className="table-container">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Workflow</th>
-                <th>Repository</th>
-                <th>Last Run</th>
-                <th className="text-center">Status</th>
-                <th>Success Rate</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredWorkflows && filteredWorkflows.length > 0 ? (
-                filteredWorkflows.map((workflow) => (
-                  <tr key={workflow.id}>
-                    <td>
-                      <Link
-                        to={`/workflows/${workflow.id}`}
-                        className="flex items-center gap-3"
-                      >
-                        <div className="p-2 rounded-lg bg-primary-100 dark:bg-primary-900/30">
-                          <Workflow className="w-4 h-4 text-primary-600 dark:text-primary-400" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900 dark:text-gray-100 hover:text-primary-600 dark:hover:text-primary-400">
-                            {workflow.name}
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">{workflow.path}</p>
-                        </div>
-                      </Link>
-                    </td>
-                    <td>
-                      <span className="text-gray-600 dark:text-gray-300">
+      <div className="card overflow-hidden">
+        {filteredWorkflows && filteredWorkflows.length > 0 ? (
+          <>
+            <div className="divide-y divide-gray-100 md:hidden dark:divide-gray-700">
+              {filteredWorkflows.map((workflow) => (
+                <div key={workflow.id} className="space-y-2 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <Link to={`/workflows/${workflow.id}`} className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-400">
+                        {workflow.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500 dark:text-gray-400">
                         {workflow.repository?.full_name || 'Unknown'}
-                      </span>
-                    </td>
-                    <td>
-                      {workflow.last_run ? (
-                        <span className="text-gray-600 dark:text-gray-300">
-                          {formatRelativeTime(workflow.last_run.started_at)}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">Never</span>
-                      )}
-                    </td>
-                    <td className="text-center">
-                      <WorkflowStatusBadge state={workflow.state} lastRun={workflow.last_run} />
-                    </td>
-                    <td>
-                      {workflow.success_rate !== undefined ? (
-                        <span className={cn(
-                          'font-medium',
-                          workflow.success_rate >= 80 ? 'text-green-600 dark:text-green-400' :
-                          workflow.success_rate >= 50 ? 'text-amber-600 dark:text-amber-400' :
-                          'text-red-600 dark:text-red-400'
-                        )}>
-                          {workflow.success_rate.toFixed(0)}%
-                        </span>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td>
-                      {workflow.html_url && (
-                        <a
-                          href={workflow.html_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                        >
-                          <ExternalLink className="w-4 h-4 text-gray-400" />
-                        </a>
-                      )}
-                    </td>
+                      </p>
+                    </Link>
+                    <WorkflowStatusBadge state={workflow.state} lastRun={workflow.last_run} />
+                  </div>
+                  <p className="break-all text-xs text-gray-500 dark:text-gray-400">{workflow.path}</p>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                    <span>
+                      {workflow.last_run ? formatRelativeTime(workflow.last_run.started_at) : 'Never run'}
+                    </span>
+                    <span>
+                      {workflow.success_rate !== undefined
+                        ? `${workflow.success_rate.toFixed(0)}% success`
+                        : 'No success rate'}
+                    </span>
+                    {workflow.html_url && (
+                      <a
+                        href={workflow.html_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary-600 dark:text-primary-400"
+                      >
+                        GitHub
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block table-container rounded-none border-x-0 border-t-0">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Workflow</th>
+                    <th>Repository</th>
+                    <th className="hidden lg:table-cell">Last Run</th>
+                    <th className="text-center">Status</th>
+                    <th className="hidden xl:table-cell">Success Rate</th>
+                    <th></th>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="text-center py-8">
-                    <Workflow className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
-                    <p className="text-gray-500 dark:text-gray-400">No workflows found</p>
-                    <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                      Sync your repositories to see workflows
-                    </p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {filteredWorkflows.map((workflow) => (
+                    <tr key={workflow.id}>
+                      <td>
+                        <Link
+                          to={`/workflows/${workflow.id}`}
+                          className="flex min-w-0 items-center gap-3"
+                        >
+                          <div className="shrink-0 rounded-lg bg-primary-100 p-2 dark:bg-primary-900/30">
+                            <Workflow className="h-4 w-4 text-primary-600 dark:text-primary-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 hover:text-primary-600 dark:text-gray-100 dark:hover:text-primary-400">
+                              {workflow.name}
+                            </p>
+                            <p className="max-w-xs truncate text-xs text-gray-500 xl:max-w-sm dark:text-gray-400">{workflow.path}</p>
+                          </div>
+                        </Link>
+                      </td>
+                      <td>
+                        <span className="text-gray-600 dark:text-gray-300">
+                          {workflow.repository?.full_name || 'Unknown'}
+                        </span>
+                      </td>
+                      <td className="hidden lg:table-cell">
+                        {workflow.last_run ? (
+                          <span className="text-gray-600 dark:text-gray-300">
+                            {formatRelativeTime(workflow.last_run.started_at)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">Never</span>
+                        )}
+                      </td>
+                      <td className="text-center">
+                        <WorkflowStatusBadge state={workflow.state} lastRun={workflow.last_run} />
+                      </td>
+                      <td className="hidden xl:table-cell">
+                        {workflow.success_rate !== undefined ? (
+                          <span className={cn(
+                            'font-medium',
+                            workflow.success_rate >= 80 ? 'text-green-600 dark:text-green-400' :
+                            workflow.success_rate >= 50 ? 'text-amber-600 dark:text-amber-400' :
+                            'text-red-600 dark:text-red-400'
+                          )}>
+                            {workflow.success_rate.toFixed(0)}%
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                      <td>
+                        {workflow.html_url && (
+                          <a
+                            href={workflow.html_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700"
+                            aria-label="Open workflow on GitHub"
+                          >
+                            <ExternalLink className="h-4 w-4 text-gray-400" />
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="px-4 py-8 text-center">
+            <Workflow className="mx-auto mb-3 h-12 w-12 text-gray-300 dark:text-gray-600" />
+            <p className="text-gray-500 dark:text-gray-400">No workflows found</p>
+            <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
+              Sync your repositories to see workflows
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -208,4 +249,3 @@ function WorkflowsSkeleton() {
     </div>
   );
 }
-

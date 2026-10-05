@@ -379,6 +379,7 @@ function RunDetailInner() {
 	const { isDark } = useTheme();
 	const [selectedJob, setSelectedJob] = useState<WorkflowJob | null>(null);
 	const [stepsExpanded, setStepsExpanded] = useState(true);
+	const [detailPane, setDetailPane] = useState<"graph" | "jobs">("graph");
 	const [cancelError, setCancelError] = useState<string | null>(null);
 	const [rerunError, setRerunError] = useState<string | null>(null);
 	const { isConnected } = useSocket();
@@ -498,6 +499,7 @@ function RunDetailInner() {
 
 	const handleJobClick = useCallback(
 		(job: WorkflowJob) => {
+			setDetailPane("jobs");
 			if (selectedJob?.id === job.id) {
 				// Toggle accordion if clicking the same job
 				setStepsExpanded(!stepsExpanded);
@@ -1476,6 +1478,14 @@ function RunDetailInner() {
 	// Track if layout is ready
 	const isLayoutReady = layoutedNodes.length > 0;
 
+	useEffect(() => {
+		if (!isLayoutReady || detailPane !== "graph") return;
+		const frame = requestAnimationFrame(() => {
+			fitView({ padding: 0.2, maxZoom: 1, duration: 150 });
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [detailPane, isLayoutReady, fitView]);
+
 	const handleViewLogs = useCallback(async () => {
 		if (!selectedJob) return;
 		try {
@@ -1507,10 +1517,7 @@ function RunDetailInner() {
 	const isRunning = run.status === "in_progress" || run.status === "queued";
 
 	return (
-		<div
-			className="-m-6 flex flex-col overflow-hidden"
-			style={{ height: "calc(100vh - 4rem - 1px)" }}
-		>
+		<div className="absolute inset-0 flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
 			{/* Inject glow animation styles */}
 			<style>{glowPulseStyles}</style>
 
@@ -1523,7 +1530,7 @@ function RunDetailInner() {
 				>
 					<div
 						className={cn(
-							"flex items-center gap-3 px-5 py-4 rounded-xl text-sm max-w-md shadow-2xl",
+							"flex w-full max-w-md items-start gap-3 rounded-xl px-4 py-4 text-sm shadow-2xl sm:px-5",
 							"bg-red-50 dark:bg-red-950/90 border-2 border-red-200 dark:border-red-700 text-red-800 dark:text-red-200",
 						)}
 					>
@@ -1545,33 +1552,36 @@ function RunDetailInner() {
 			)}
 
 			{/* Header */}
-			<div className="shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-				<div className="flex items-start justify-between">
-					<div className="flex items-center gap-4">
+			<div className="shrink-0 border-b border-gray-200 bg-white px-3 py-3 sm:px-4 dark:border-gray-700 dark:bg-gray-900">
+				<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+					<div className="flex min-w-0 items-start gap-3">
 						<button
 							type="button"
 							onClick={() => navigate(-1)}
-							className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+							className="shrink-0 rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+							aria-label="Go back"
 						>
-							<ArrowLeft className="w-5 h-5 text-gray-500" />
+							<ArrowLeft className="h-5 w-5 text-gray-500" />
 						</button>
-						<div>
-							<div className="flex items-center gap-3">
+						<div className="min-w-0">
+							<div className="flex min-w-0 items-center gap-3">
 								<RunStatusIcon
 									status={run.status}
 									conclusion={run.conclusion}
 									size="lg"
 								/>
-								<h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+								<h1 className="min-w-0 break-words text-lg font-bold text-gray-900 sm:text-xl dark:text-gray-100">
 									{run.name}
 								</h1>
 							</div>
-							<p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-								{run.repository?.full_name} • Run #{run.run_number}
+							<p className="mt-1 break-words text-sm text-gray-500 dark:text-gray-400">
+								{[run.repository?.full_name, `Run #${run.run_number}`]
+									.filter(Boolean)
+									.join(" • ")}
 							</p>
 						</div>
 					</div>
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{isRunning && <LiveStatus />}
 
 						{/* Manual check: updates arrive on their own; this forces a GitHub read now */}
@@ -1639,27 +1649,27 @@ function RunDetailInner() {
 				</div>
 
 				{/* Info Cards */}
-				<div className="grid grid-cols-4 gap-3 mt-3">
-					<div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-						<GitBranch className="w-4 h-4 text-gray-400" />
-						<span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+				<div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4 lg:gap-3">
+					<div className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800">
+						<GitBranch className="h-4 w-4 shrink-0 text-gray-400" />
+						<span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
 							{run.branch}
 						</span>
 					</div>
-					<div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-						<GitCommit className="w-4 h-4 text-gray-400" />
+					<div className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800">
+						<GitCommit className="h-4 w-4 shrink-0 text-gray-400" />
 						<span className="text-sm font-mono text-gray-900 dark:text-gray-100">
 							{run.commit_sha.substring(0, 7)}
 						</span>
 					</div>
-					<div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-						<User className="w-4 h-4 text-gray-400" />
-						<span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+					<div className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800">
+						<User className="h-4 w-4 shrink-0 text-gray-400" />
+						<span className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
 							{run.actor_login}
 						</span>
 					</div>
-					<div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-						<Clock className="w-4 h-4 text-gray-400" />
+					<div className="flex min-w-0 items-center gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-800">
+						<Clock className="h-4 w-4 shrink-0 text-gray-400" />
 						<span className="text-sm font-medium text-gray-900 dark:text-gray-100">
 							{formatDuration(run.duration_seconds)}
 						</span>
@@ -1667,12 +1677,40 @@ function RunDetailInner() {
 				</div>
 			</div>
 
+			<div className="grid shrink-0 grid-cols-2 border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900 xl:hidden">
+				<button
+					type="button"
+					onClick={() => setDetailPane("graph")}
+					className={cn(
+						"px-3 py-2.5 text-sm font-medium",
+						detailPane === "graph"
+							? "border-b-2 border-primary-500 text-primary-600 dark:text-primary-300"
+							: "text-gray-500 dark:text-gray-400",
+					)}
+				>
+					Graph
+				</button>
+				<button
+					type="button"
+					onClick={() => setDetailPane("jobs")}
+					className={cn(
+						"px-3 py-2.5 text-sm font-medium",
+						detailPane === "jobs"
+							? "border-b-2 border-primary-500 text-primary-600 dark:text-primary-300"
+							: "text-gray-500 dark:text-gray-400",
+					)}
+				>
+					Jobs{jobs ? ` (${jobs.length})` : ""}
+				</button>
+			</div>
+
 			{/* Main Content - Graph and Right Panel */}
-			<div className="flex-1 flex min-h-0">
+			<div className="flex min-h-0 flex-1 flex-col xl:flex-row">
 				{/* ReactFlow Graph - Main Area */}
 				<div
 					className={cn(
-						"flex-1 relative",
+						"relative min-h-0 min-w-0 xl:flex-1",
+						detailPane === "graph" ? "flex-1" : "hidden xl:block",
 						isDark ? "bg-slate-900" : "bg-gray-50",
 					)}
 				>
@@ -1741,16 +1779,17 @@ function RunDetailInner() {
 										: "bg-white hover:bg-gray-100 border border-gray-300 text-gray-700",
 								)}
 								title="Auto-arrange nodes"
+								aria-label="Auto layout"
 							>
-								<LayoutGrid className="w-4 h-4" />
-								Auto Layout
+								<LayoutGrid className="h-4 w-4" />
+								<span className="hidden sm:inline">Auto Layout</span>
 							</button>
 						</>
 					) : run.conclusion === "failure" ? (
-						<div className="flex flex-col items-center justify-center h-full p-8 overflow-auto">
+						<div className="flex h-full flex-col items-center justify-center overflow-auto p-4 sm:p-8">
 							<div
 								className={cn(
-									"border rounded-2xl p-8 max-w-2xl w-full shadow-2xl",
+									"w-full max-w-2xl rounded-2xl border p-4 shadow-2xl sm:p-8",
 									isDark
 										? "bg-linear-to-br from-red-950/50 to-red-900/30 border-red-700/50 shadow-red-900/20"
 										: "bg-linear-to-br from-red-50 to-red-100/50 border-red-200 shadow-red-200/50",
@@ -1918,7 +1957,12 @@ function RunDetailInner() {
 				</div>
 
 				{/* Right Panel */}
-				<div className="w-80 shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
+				<div
+					className={cn(
+						"min-h-0 flex-col border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900 xl:flex xl:w-80 xl:shrink-0 xl:border-l 2xl:w-96",
+						detailPane === "jobs" ? "flex flex-1 xl:flex-none" : "hidden",
+					)}
+				>
 					{/* Timeline Section */}
 					<div className="shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
 						<h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
@@ -1926,20 +1970,20 @@ function RunDetailInner() {
 							Timeline
 						</h2>
 						<div className="space-y-0.5 text-xs">
-							<div className="flex items-center justify-between">
-								<span className="text-gray-500 dark:text-gray-400">
+							<div className="flex items-start justify-between gap-3">
+								<span className="shrink-0 text-gray-500 dark:text-gray-400">
 									Started
 								</span>
-								<span className="text-gray-900 dark:text-gray-100 font-medium">
+								<span className="text-right font-medium text-gray-900 dark:text-gray-100">
 									{formatDateTime(run.started_at)}
 								</span>
 							</div>
 							{run.completed_at && (
-								<div className="flex items-center justify-between">
-									<span className="text-gray-500 dark:text-gray-400">
+								<div className="flex items-start justify-between gap-3">
+									<span className="shrink-0 text-gray-500 dark:text-gray-400">
 										Completed
 									</span>
-									<span className="text-gray-900 dark:text-gray-100 font-medium">
+									<span className="text-right font-medium text-gray-900 dark:text-gray-100">
 										{formatDateTime(run.completed_at)}
 									</span>
 								</div>

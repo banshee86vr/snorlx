@@ -159,10 +159,10 @@ export function Dashboard() {
 	const totalDuration = summary?.runs.total_duration_seconds || 0;
 
 	return (
-		<div className="space-y-6">
+		<div className="min-w-0 space-y-6">
 			{/* Page Header */}
 			<div>
-				<h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+				<h1 className="text-xl font-bold text-gray-900 sm:text-2xl dark:text-gray-100">
 					Dashboard
 				</h1>
 				<p className="text-gray-500 dark:text-gray-400 mt-1">
@@ -197,7 +197,7 @@ export function Dashboard() {
 						"Sync to grade repos"
 					);
 				return (
-					<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
 						<StatCard
 							title="Workflows"
 							value={summary?.workflows.total || 0}
@@ -239,7 +239,7 @@ export function Dashboard() {
 
 			{/* Active Pipelines Grid */}
 			<div>
-				<div className="flex flex-wrap items-center gap-3 mb-4">
+				<div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
 					<Zap className="w-5 h-5 text-primary-500" />
 					<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
 						Active Pipelines
@@ -260,7 +260,7 @@ export function Dashboard() {
 						type="button"
 						onClick={handleRefreshPipelines}
 						disabled={pipelinesRefetching || pipelinesRefreshingFromGitHub}
-						className="ml-auto inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30 disabled:opacity-50"
+						className="ml-auto inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50 disabled:opacity-50 dark:text-primary-400 dark:hover:bg-primary-900/30"
 						title="Check GitHub now (updates arrive automatically; use this if something looks stale)"
 					>
 						<RefreshCw
@@ -298,7 +298,7 @@ export function Dashboard() {
 							</div>
 						</div>
 					) : activePipelines.length > 0 ? (
-						<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+						<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
 							{activePipelines.map((pipeline) => (
 								<PipelineCard key={pipeline.id} pipeline={pipeline} />
 							))}
@@ -337,10 +337,10 @@ export function Dashboard() {
 			</div>
 
 			{/* Charts Row */}
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+			<div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-3">
 				{/* Trend Chart */}
-				<div className="lg:col-span-2 card p-6">
-					<div className="flex items-center justify-between mb-4">
+				<div className="card min-w-0 p-4 sm:p-6 xl:col-span-2">
+					<div className="mb-4 flex items-center justify-between gap-3">
 						<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
 							Run Trends
 						</h2>
@@ -348,7 +348,7 @@ export function Dashboard() {
 							<Loader2 className="w-4 h-4 animate-spin text-primary-500" />
 						)}
 					</div>
-					<div className="h-72">
+					<div className="h-56 min-w-0 sm:h-72">
 						{trendsData?.trends && trendsData.trends.length > 0 ? (
 							<ResponsiveContainer width="100%" height="100%">
 								<AreaChart data={trendsData.trends}>
@@ -397,6 +397,9 @@ export function Dashboard() {
 									<XAxis
 										dataKey="date"
 										stroke={chartColors.axisStroke}
+										minTickGap={28}
+										interval="preserveStartEnd"
+										tick={{ fontSize: 11, fill: chartColors.axisStroke }}
 										tickFormatter={(value) =>
 											new Date(value).toLocaleDateString("en-US", {
 												month: "short",
@@ -404,7 +407,11 @@ export function Dashboard() {
 											})
 										}
 									/>
-									<YAxis stroke={chartColors.axisStroke} />
+									<YAxis
+										stroke={chartColors.axisStroke}
+										width={36}
+										tick={{ fontSize: 11, fill: chartColors.axisStroke }}
+									/>
 									<Tooltip
 										contentStyle={{
 											backgroundColor: chartColors.tooltipBg,
@@ -436,11 +443,11 @@ export function Dashboard() {
 				</div>
 
 				{/* Run Distribution Pie Chart */}
-				<div className="card p-6">
-					<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+				<div className="card min-w-0 p-4 sm:p-6">
+					<h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
 						Run Distribution
 					</h2>
-					<div className="h-48">
+					<div className="h-48 min-w-0">
 						{summary && summary.runs.total > 0 ? (
 							<ResponsiveContainer width="100%" height="100%">
 								<PieChart>
@@ -471,7 +478,7 @@ export function Dashboard() {
 							<EmptyState icon={Play} message="No runs yet" />
 						)}
 					</div>
-					<div className="flex justify-center gap-4 mt-4">
+					<div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2">
 						{runData.map((item) => (
 							<div key={item.name} className="flex items-center gap-2">
 								<div
@@ -489,7 +496,7 @@ export function Dashboard() {
 
 			{/* Recent Runs */}
 			<div className="card">
-				<div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+				<div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-gray-700">
 					<h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
 						Recent Runs
 					</h2>
@@ -506,23 +513,23 @@ export function Dashboard() {
 							<Link
 								key={run.id}
 								to={`/runs/${run.id}`}
-								className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+								className="flex flex-col gap-2 px-4 py-4 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:hover:bg-gray-800/50"
 							>
-								<div className="flex items-center gap-4">
+								<div className="flex min-w-0 items-center gap-3 sm:gap-4">
 									<RunStatusIcon
 										status={run.status}
 										conclusion={run.conclusion}
 									/>
-									<div>
-										<p className="font-medium text-gray-900 dark:text-gray-100">
+									<div className="min-w-0">
+										<p className="truncate font-medium text-gray-900 dark:text-gray-100">
 											{run.name}
 										</p>
-										<p className="text-sm text-gray-500 dark:text-gray-400">
+										<p className="truncate text-sm text-gray-500 dark:text-gray-400">
 											{run.repository?.full_name || "Unknown"} • {run.branch}
 										</p>
 									</div>
 								</div>
-								<div className="text-right">
+								<div className="shrink-0 pl-11 text-left sm:pl-0 sm:text-right">
 									<p className="text-sm text-gray-900 dark:text-gray-100">
 										{formatDuration(run.duration_seconds)}
 									</p>
@@ -570,13 +577,13 @@ function StatCard({
 	};
 
 	return (
-		<div className="card p-6">
-			<div className="flex items-start justify-between">
-				<div className="flex-1">
+		<div className="card min-w-0 p-4 sm:p-6">
+			<div className="flex items-start justify-between gap-3">
+				<div className="min-w-0 flex-1">
 					<p className="text-sm font-medium text-gray-500 dark:text-gray-400">
 						{title}
 					</p>
-					<p className="text-3xl font-bold text-gray-900 dark:text-gray-100 mt-1">
+					<p className="mt-1 break-words text-2xl font-bold text-gray-900 sm:text-3xl dark:text-gray-100">
 						{value}
 					</p>
 					{subtitle && (
@@ -591,7 +598,7 @@ function StatCard({
 						)
 					)}
 				</div>
-				<div className={cn("p-3 rounded-lg", colorClasses[color])}>
+				<div className={cn("shrink-0 rounded-lg p-2.5 sm:p-3", colorClasses[color])}>
 					<Icon className="w-6 h-6" />
 				</div>
 			</div>
@@ -695,20 +702,20 @@ function PipelineCard({ pipeline }: { pipeline: WorkflowRun }) {
 					</div>
 
 					{/* Actor + Time */}
-					<div className="flex items-center justify-between">
-						<div className="flex items-center gap-2 text-gray-600 dark:text-gray-400">
+					<div className="flex min-w-0 items-center justify-between gap-2">
+						<div className="flex min-w-0 items-center gap-2 text-gray-600 dark:text-gray-400">
 							{pipeline.actor_avatar ? (
 								<img
 									src={pipeline.actor_avatar}
-									alt={pipeline.actor_login}
-									className="w-4 h-4 rounded-full"
+									alt=""
+									className="h-4 w-4 shrink-0 rounded-full"
 								/>
 							) : (
-								<User className="w-3.5 h-3.5" />
+								<User className="h-3.5 w-3.5 shrink-0" />
 							)}
-							<span className="text-xs">{pipeline.actor_login}</span>
+							<span className="truncate text-xs">{pipeline.actor_login}</span>
 						</div>
-						<span className="text-xs text-gray-500 dark:text-gray-500">
+						<span className="shrink-0 text-xs text-gray-500 dark:text-gray-500">
 							{formatRelativeTime(pipeline.started_at)}
 						</span>
 					</div>
@@ -776,13 +783,13 @@ function DashboardSkeleton() {
 	return (
 		<div className="space-y-6 animate-pulse">
 			<div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-sm w-48" />
-			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-				{[...Array(4)].map((_, i) => (
+			<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+				{[...Array(5)].map((_, i) => (
 					<div key={i} className="card p-6 h-32" />
 				))}
 			</div>
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-				<div className="lg:col-span-2 card h-96" />
+			<div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+				<div className="card h-96 xl:col-span-2" />
 				<div className="card h-96" />
 			</div>
 		</div>

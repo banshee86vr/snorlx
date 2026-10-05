@@ -25,7 +25,7 @@ export function Sidebar() {
 
   return (
     <aside className={cn(
-      'fixed inset-y-0 left-0 z-50 hidden bg-white border-r border-gray-200 lg:flex lg:flex-col transition-all duration-300 dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-2xl dark:shadow-secondary-500/5',
+      'fixed inset-y-0 left-0 z-50 hidden bg-white border-r border-gray-200 pt-[env(safe-area-inset-top)] lg:flex lg:flex-col transition-all duration-300 dark:bg-slate-900/50 dark:border-secondary-500/30 dark:shadow-2xl dark:shadow-secondary-500/5',
       isCollapsed ? 'w-20' : 'w-64'
     )}>
       <div className="flex flex-col h-full">

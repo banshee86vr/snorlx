@@ -208,7 +208,7 @@ function CheckBox({ check, pass }: { check: string; pass: boolean }) {
       </div>
       {(meta || label) && (
         <div
-          className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-3 py-2 w-72 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-lg text-left opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-50 pointer-events-none"
+          className="pointer-events-none invisible absolute left-0 z-50 mt-1.5 w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-gray-200 bg-white px-3 py-2 text-left opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 sm:left-1/2 sm:-translate-x-1/2 dark:border-gray-600 dark:bg-gray-800"
           role="tooltip"
         >
           <p className="text-xs font-semibold text-gray-900 dark:text-gray-100 mb-1">{label}</p>
@@ -276,33 +276,34 @@ export function RepositoryDetail() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3 sm:gap-4">
           <Link
             to="/repositories"
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="shrink-0 rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+            aria-label="Back to repositories"
           >
-            <ArrowLeft className="w-5 h-5 text-gray-500" />
+            <ArrowLeft className="h-5 w-5 text-gray-500" />
           </Link>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{repo.name}</h1>
+              <h1 className="break-words text-xl font-bold text-gray-900 sm:text-2xl dark:text-gray-100">{repo.name}</h1>
               {repo.is_private ? (
                 <Lock className="w-4 h-4 text-gray-400" />
               ) : (
                 <Globe className="w-4 h-4 text-gray-400" />
               )}
             </div>
-            <p className="text-gray-500 dark:text-gray-400">{repo.full_name}</p>
+            <p className="break-all text-gray-500 dark:text-gray-400">{repo.full_name}</p>
           </div>
         </div>
         <a
           href={repo.html_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-secondary flex items-center gap-2"
+          className="btn-secondary inline-flex w-fit shrink-0 items-center gap-2"
         >
           <ExternalLink className="w-4 h-4" />
           View on GitHub
@@ -337,7 +338,7 @@ export function RepositoryDetail() {
       {/* Repository Score */}
       {(score || repo) && (
         <div className="card">
-          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-gray-700">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Repository Score</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
@@ -357,7 +358,7 @@ export function RepositoryDetail() {
               {refreshGradeMutation.isPending ? 'Checking…' : 'Refresh grade'}
             </button>
           </div>
-          <div className="p-6 space-y-6">
+          <div className="space-y-6 p-4 sm:p-6">
             {!score ? (
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Click &quot;Refresh grade&quot; to check this repository on GitHub and compute its score.
@@ -380,9 +381,10 @@ export function RepositoryDetail() {
                 {score.tier === 'none' ? 'bronze' : score.tier}
               </span>
             </div>
-            <div className="h-[280px]">
+            <div className="h-[220px] min-w-0 sm:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <RadarChart
+                  margin={{ top: 8, right: 24, bottom: 8, left: 24 }}
                   data={SCORE_CATEGORIES.map(({ key, label }) => ({
                     subject: label,
                     score:
@@ -405,7 +407,7 @@ export function RepositoryDetail() {
                   <PolarGrid stroke={isDark ? '#374151' : '#d1d5db'} />
                   <PolarAngleAxis
                     dataKey="subject"
-                    tick={{ fill: isDark ? '#9ca3af' : '#6b7280', fontSize: 12 }}
+                    tick={{ fill: isDark ? '#9ca3af' : '#6b7280', fontSize: 11 }}
                   />
                   <PolarRadiusAxis
                     angle={90}
@@ -460,7 +462,7 @@ export function RepositoryDetail() {
                           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
                             {category}
                           </p>
-                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                             {byCategory[category].map(([check, pass]) => (
                               <CheckBox key={check} check={check} pass={pass} />
                             ))}
@@ -472,7 +474,7 @@ export function RepositoryDetail() {
                           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
                             Other
                           </p>
-                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                             {byCategory['Other'].map(([check, pass]) => (
                               <CheckBox key={check} check={check} pass={pass} />
                             ))}
@@ -492,7 +494,7 @@ export function RepositoryDetail() {
 
       {/* Workflows */}
       <div className="card">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Workflows</h2>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -501,15 +503,15 @@ export function RepositoryDetail() {
               <Link
                 key={workflow.id}
                 to={`/workflows/${workflow.id}`}
-                className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                className="flex flex-col gap-2 px-4 py-4 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:hover:bg-gray-800/50"
               >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-primary-100 dark:bg-primary-900/30">
-                    <Workflow className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="shrink-0 rounded-lg bg-primary-100 p-2 dark:bg-primary-900/30">
+                    <Workflow className="h-4 w-4 text-primary-600 dark:text-primary-400" />
                   </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-gray-100">{workflow.name}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{workflow.path}</p>
+                  <div className="min-w-0">
+                    <p className="break-words font-medium text-gray-900 dark:text-gray-100">{workflow.name}</p>
+                    <p className="break-all text-sm text-gray-500 dark:text-gray-400">{workflow.path}</p>
                   </div>
                 </div>
                 <span className={`badge ${workflow.state === 'active' ? 'badge-success' : 'badge-neutral'}`}>

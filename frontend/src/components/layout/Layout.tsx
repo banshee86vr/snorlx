@@ -15,14 +15,14 @@ export function Layout({ children }: LayoutProps) {
   const { sync } = useSync();
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 dark:bg-linear-to-br dark:from-slate-950 dark:via-slate-900 dark:to-primary-900/20">
+    <div className="h-dvh overflow-hidden bg-gray-50 dark:bg-slate-950 dark:bg-linear-to-br dark:from-slate-950 dark:via-slate-900 dark:to-primary-900/20">
       <Sidebar />
       <div className={cn(
-        'transition-all duration-300',
+        'flex h-full min-w-0 flex-col transition-all duration-300',
         isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
       )}>
         <Header />
-        <main className="p-6">
+        <main className="relative min-h-0 flex-1 overflow-x-clip overflow-y-auto p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 sm:pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           {children}
         </main>
       </div>
@@ -44,7 +44,7 @@ export function Layout({ children }: LayoutProps) {
             }}
           >
             <div className="bg-primary-50 dark:bg-primary-900/95 border border-primary-200 dark:border-primary-500/50 rounded-lg p-4 dark:shadow-lg dark:shadow-primary-500/10">
-              <div className="flex items-center gap-3 mb-3">
+              <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <RefreshCw className="w-5 h-5 text-primary-600 dark:text-primary-400 animate-spin" />
                 <h3 className="font-semibold text-primary-900 dark:text-primary-100">
                   Syncing Repositories
@@ -79,4 +79,3 @@ export function Layout({ children }: LayoutProps) {
     </div>
   );
 }
-

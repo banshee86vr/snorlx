@@ -42,34 +42,35 @@ export function WorkflowDetail() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Link
-          to="/workflows"
-          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5 text-gray-500" />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{workflow.name}</h1>
-          <p className="text-gray-500 dark:text-gray-400">{workflow.path}</p>
+    <div className="min-w-0 space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
+          <Link
+            to="/workflows"
+            className="shrink-0 rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+            aria-label="Back to workflows"
+          >
+            <ArrowLeft className="h-5 w-5 text-gray-500" />
+          </Link>
+          <div className="min-w-0">
+            <h1 className="break-words text-xl font-bold text-gray-900 sm:text-2xl dark:text-gray-100">{workflow.name}</h1>
+            <p className="break-all text-gray-500 dark:text-gray-400">{workflow.path}</p>
+          </div>
         </div>
         {workflow.html_url && (
           <a
             href={workflow.html_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn-secondary flex items-center gap-2"
+            className="btn-secondary inline-flex w-fit shrink-0 items-center gap-2"
           >
-            <ExternalLink className="w-4 h-4" />
+            <ExternalLink className="h-4 w-4" />
             View on GitHub
           </a>
         )}
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="card p-4">
           <p className="text-sm text-gray-500 dark:text-gray-400">Total Runs</p>
           <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">
@@ -90,9 +91,8 @@ export function WorkflowDetail() {
         </div>
       </div>
 
-      {/* Recent Runs */}
       <div className="card">
-        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div className="border-b border-gray-200 px-4 py-4 sm:px-6 dark:border-gray-700">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Recent Runs</h2>
         </div>
         <div className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -101,20 +101,20 @@ export function WorkflowDetail() {
               <Link
                 key={run.id}
                 to={`/runs/${run.id}`}
-                className="flex items-center justify-between px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                className="flex flex-col gap-2 px-4 py-4 transition-colors hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:hover:bg-gray-800/50"
               >
-                <div className="flex items-center gap-4">
+                <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                   <RunStatusIcon status={run.status} conclusion={run.conclusion} />
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-gray-900 dark:text-gray-100">
                       #{run.run_number}
                     </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                    <p className="truncate text-sm text-gray-500 dark:text-gray-400">
                       {run.branch} • {run.event}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="shrink-0 pl-11 text-left sm:pl-0 sm:text-right">
                   <p className="text-sm text-gray-900 dark:text-gray-100">
                     {formatDuration(run.duration_seconds)}
                   </p>
@@ -126,7 +126,7 @@ export function WorkflowDetail() {
             ))
           ) : (
             <div className="px-6 py-8 text-center">
-              <Clock className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
+              <Clock className="mx-auto mb-3 h-12 w-12 text-gray-300 dark:text-gray-600" />
               <p className="text-gray-500 dark:text-gray-400">No runs yet</p>
             </div>
           )}
@@ -139,32 +139,31 @@ export function WorkflowDetail() {
 function RunStatusIcon({ status, conclusion }: { status: string; conclusion: string | null }) {
   if (status === 'in_progress' || status === 'queued') {
     return (
-      <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-        <Loader2 className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-spin" />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900">
+        <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
       </div>
     );
   }
 
   if (conclusion === 'success') {
     return (
-      <div className="w-8 h-8 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center">
-        <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900">
+        <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
       </div>
     );
   }
 
   if (conclusion === 'failure') {
     return (
-      <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900 flex items-center justify-center">
-        <XCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900">
+        <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
       </div>
     );
   }
 
   return (
-    <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-      <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
+      <Clock className="h-4 w-4 text-gray-600 dark:text-gray-400" />
     </div>
   );
 }
-

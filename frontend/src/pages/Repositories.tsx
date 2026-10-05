@@ -52,15 +52,15 @@ export function Repositories() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Repositories</h1>
+    <div className="min-w-0 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900 sm:text-2xl dark:text-gray-100">Repositories</h1>
           <p className="text-gray-500 dark:text-gray-400 mt-1">
             All repositories with GitHub Actions workflows
           </p>
         </div>
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-72 sm:shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
@@ -88,7 +88,7 @@ export function Repositories() {
             Updating…
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {repos.length > 0 ? (
           repos.map((repo) => (
             <Link
@@ -96,22 +96,22 @@ export function Repositories() {
               to={`/repositories/${repo.id}`}
               className="card p-6 hover:shadow-lg transition-shadow"
             >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-primary-100 dark:bg-primary-900/30">
-                    <FolderGit2 className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="shrink-0 rounded-lg bg-primary-100 p-2 dark:bg-primary-900/30">
+                    <FolderGit2 className="h-5 w-5 text-primary-600 dark:text-primary-400" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-primary-600">
+                  <div className="min-w-0">
+                    <h3 className="truncate font-semibold text-gray-900 dark:text-gray-100">
                       {repo.name}
                     </h3>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">{repo.full_name}</p>
+                    <p className="truncate text-sm text-gray-500 dark:text-gray-400">{repo.full_name}</p>
                   </div>
                 </div>
                 {repo.is_private ? (
-                  <Lock className="w-4 h-4 text-gray-400" />
+                  <Lock className="h-4 w-4 shrink-0 text-gray-400" />
                 ) : (
-                  <Globe className="w-4 h-4 text-gray-400" />
+                  <Globe className="h-4 w-4 shrink-0 text-gray-400" />
                 )}
               </div>
 
@@ -126,7 +126,7 @@ export function Repositories() {
                   <Workflow className="w-4 h-4" />
                   <span>{repo.workflow_count || 0} workflows</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   {scoreByRepoId.has(repo.id) && (() => {
                     const score = scoreByRepoId.get(repo.id)!;
                     const tier = score.tier === "none" ? "bronze" : score.tier;
@@ -194,7 +194,7 @@ export function Repositories() {
               </select>
             </label>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -227,7 +227,7 @@ function RepositoriesSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
       <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded-sm w-48" />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {[...Array(6)].map((_, i) => (
           <div key={i} className="card p-6 h-40" />
         ))}
