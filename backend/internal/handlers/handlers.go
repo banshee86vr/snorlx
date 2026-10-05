@@ -105,6 +105,8 @@ func (h *Handler) readSessionCookie(r *http.Request) (string, bool) {
 }
 
 func (h *Handler) authCookie(name, value string, maxAge int, expires time.Time) *http.Cookie {
+	// #nosec G124 -- Secure follows the FRONTEND_URL scheme (config.CookieSecure): it is true for every
+	// https deployment and false only for plain-http loopback development, which config.Load enforces.
 	cookie := &http.Cookie{
 		Name:     name,
 		Value:    value,
