@@ -20,7 +20,7 @@ function errorResult(err: unknown) {
 export function createSnorlxMcpServer(client: SnorlxApiClient): McpServer {
   const server = new McpServer({
     name: 'snorlx',
-    version: '2.0.0', // x-release-please-version
+    version: '2.0.1', // x-release-please-version
   });
 
   server.tool('health', 'Check Snorlx backend health. The response includes status and version.', {}, async () => {

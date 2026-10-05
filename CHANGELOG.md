@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/banshee86vr/snorlx/compare/v2.0.0...v2.0.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* trim surrounding whitespace from DATABASE_URL and update related documentation ([#326](https://github.com/banshee86vr/snorlx/issues/326)) ([1643ae2](https://github.com/banshee86vr/snorlx/commit/1643ae27be6f0328cc64b38883bccb8d84ffac6a))
+
 ## [2.0.0](https://github.com/banshee86vr/snorlx/compare/v1.0.1...v2.0.0) (2026-10-05)
 
 
