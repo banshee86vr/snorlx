@@ -12,6 +12,8 @@ import {
 	ReactFlow,
 	Background,
 	Controls,
+	Handle,
+	Position,
 	useNodesState,
 	useEdgesState,
 	useReactFlow,
@@ -190,9 +192,26 @@ import {
 import { useTheme } from "../context/ThemeContext";
 import type { WorkflowJob } from "../types";
 
+// React Flow only draws an edge when both ends have a Handle to attach to.
+// Jobs nested in a matrix box receive their edges on the box, so their own
+// handles stay invisible.
+function NodeHandles({ hidden = false }: { hidden?: boolean }) {
+	const className = cn(
+		"bg-gray-400! w-2! h-2! border-0!",
+		hidden && "opacity-0!",
+	);
+	return (
+		<>
+			<Handle type="target" position={Position.Left} className={className} />
+			<Handle type="source" position={Position.Right} className={className} />
+		</>
+	);
+}
+
 // Custom node component for jobs in the flow
 function JobNode({
 	data,
+	parentId,
 }: {
 	data: {
 		job: WorkflowJob;
@@ -200,6 +219,7 @@ function JobNode({
 		onClick: () => void;
 		displayName?: string;
 	};
+	parentId?: string;
 }) {
 	const { job, selected, onClick, displayName } = data;
 
@@ -259,6 +279,7 @@ function JobNode({
 					: undefined
 			}
 		>
+			<NodeHandles hidden={!!parentId} />
 			<div className="flex items-center gap-2">
 				<JobStatusIcon status={job.status} conclusion={job.conclusion} />
 				<div className="flex-1 min-w-0 text-left">
@@ -311,6 +332,7 @@ function MatrixGroupNode({
 			)}
 			style={{ width: data.width, height: data.height }}
 		>
+			<NodeHandles />
 			<div
 				className={cn(
 					"absolute -top-3 left-3 px-2 py-0.5 rounded-sm text-xs font-medium",
@@ -406,16 +428,20 @@ function RunDetailInner() {
 		return () => clearInterval(t);
 	}, [run, run?.status, autoRefresh, refreshInterval, id, refreshFromGitHub]);
 
-	// Fetch workflow definition to get job dependencies (needs)
-	const { data: workflowDefinition } = useQuery({
-		queryKey: ["runs", id, "workflow-definition"],
-		queryFn: async () => {
-			const result = await runsApi.getWorkflowDefinition(Number(id));
-			return result;
-		},
-		enabled: !!id,
-		staleTime: 1000 * 60 * 60, // Cache for 1 hour since workflow definition doesn't change
-	});
+	// Fetch workflow definition to get job dependencies (needs).
+	// Jobs usually come from the local cache before this GitHub call returns, so
+	// the graph waits for it to settle (data or error) instead of laying out a
+	// dependency-less graph first.
+	const { data: workflowDefinition, isFetched: workflowDefinitionSettled } =
+		useQuery({
+			queryKey: ["runs", id, "workflow-definition"],
+			queryFn: async () => {
+				const result = await runsApi.getWorkflowDefinition(Number(id));
+				return result;
+			},
+			enabled: !!id,
+			staleTime: 1000 * 60 * 60, // Cache for 1 hour since workflow definition doesn't change
+		});
 
 	// Fetch annotations when run has failed but has no jobs
 	const { data: annotations, isLoading: annotationsLoading } = useQuery({
@@ -493,7 +519,7 @@ function RunDetailInner() {
 
 	// Create nodes and edges for ReactFlow using actual workflow definition dependencies
 	const { nodes, edges } = useMemo(() => {
-		if (!jobs || jobs.length === 0) {
+		if (!jobs || jobs.length === 0 || !workflowDefinitionSettled) {
 			return { nodes: [], edges: [] };
 		}
 
@@ -1260,7 +1286,7 @@ function RunDetailInner() {
 		}
 
 		return { nodes: nodeList, edges: edgeList };
-	}, [jobs, workflowDefinition]);
+	}, [jobs, workflowDefinition, workflowDefinitionSettled]);
 
 	// State management for ReactFlow nodes and edges
 	const [stateNodes, setStateNodes, onNodesChange] = useNodesState<Node>([]);
@@ -1270,15 +1296,14 @@ function RunDetailInner() {
 	// Track if layout has been applied for the current structural key
 	const syncedStructuralKeyRef = useRef<string>("");
 
-	// Structural key: only changes when jobs are added/removed (triggers re-layout)
-	const structuralKey = useMemo(
-		() =>
-			nodes
-				.map((n) => n.id)
-				.sort((a, b) => a.localeCompare(b))
-				.join(","),
-		[nodes],
-	);
+	// Structural key: changes when jobs are added/removed or when a dependency
+	// edge appears/disappears (triggers re-layout). Status-only changes keep it.
+	const structuralKey = useMemo(() => {
+		if (nodes.length === 0) return "";
+		const nodeIds = nodes.map((n) => n.id).sort((a, b) => a.localeCompare(b));
+		const edgeIds = edges.map((e) => e.id).sort((a, b) => a.localeCompare(b));
+		return `${nodeIds.join(",")}|${edgeIds.join(",")}`;
+	}, [nodes, edges]);
 
 	// Data key: changes when job statuses/conclusions change (triggers data-only update)
 	const dataKey = useMemo(() => {

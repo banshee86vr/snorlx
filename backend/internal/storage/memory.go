@@ -709,11 +709,17 @@ func (m *MemoryStorage) UpsertJob(ctx context.Context, job *models.WorkflowJob) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if exists by GitHub ID
+	// Check if exists by GitHub ID. A queued job has no runner yet and GitHub
+	// moves started_at once a runner picks it up, so refresh those fields too.
 	for id, existing := range m.jobs {
 		if existing.GitHubID == job.GitHubID {
+			existing.Name = job.Name
 			existing.Status = job.Status
 			existing.Conclusion = job.Conclusion
+			existing.RunnerName = job.RunnerName
+			existing.RunnerGroup = job.RunnerGroup
+			existing.Labels = job.Labels
+			existing.StartedAt = job.StartedAt
 			existing.CompletedAt = job.CompletedAt
 			existing.DurationSeconds = job.DurationSeconds
 			existing.Steps = job.Steps

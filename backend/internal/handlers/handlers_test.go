@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"snorlx/backend/internal/config"
+	"snorlx/backend/internal/github"
 	"snorlx/backend/internal/models"
 	"snorlx/backend/internal/version"
 
@@ -35,6 +36,7 @@ type mockStorage struct {
 	getRunFunc            func(ctx context.Context, id int) (*models.WorkflowRun, error)
 	getWorkflowFunc       func(ctx context.Context, id int) (*models.Workflow, error)
 	listJobsForRunFunc    func(ctx context.Context, runID int) ([]models.WorkflowJob, error)
+	upsertJobFunc         func(ctx context.Context, job *models.WorkflowJob) (*models.WorkflowJob, error)
 	pingFunc              func(ctx context.Context) error
 }
 
@@ -134,6 +136,9 @@ func (m *mockStorage) GetJob(ctx context.Context, id int) (*models.WorkflowJob, 
 	return nil, nil
 }
 func (m *mockStorage) UpsertJob(ctx context.Context, job *models.WorkflowJob) (*models.WorkflowJob, error) {
+	if m.upsertJobFunc != nil {
+		return m.upsertJobFunc(ctx, job)
+	}
 	return job, nil
 }
 func (m *mockStorage) ListDeployments(ctx context.Context, repoID *int) ([]models.Deployment, error) {
@@ -728,6 +733,75 @@ func TestGetRunJobs_CachedJobsRequireAccess(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "secret-job") {
 		t.Error("cached jobs leaked to a user without access")
+	}
+}
+
+// A refresh fetches jobs from GitHub and must answer with the rows the store
+// returned, including their internal ids, not with the unsaved input structs.
+func TestGetRunJobs_RefreshReturnsStoredJobs(t *testing.T) {
+	ghServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/repos/acme/widgets/actions/runs/555/jobs") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":2,"jobs":[
+			{"id":111,"run_id":555,"name":"build","status":"completed","conclusion":"success","started_at":"2026-10-05T15:13:15Z","completed_at":"2026-10-05T15:13:35Z"},
+			{"id":112,"run_id":555,"name":"test","status":"queued","started_at":"2026-10-05T15:13:35Z"}
+		]}`))
+	}))
+	defer ghServer.Close()
+
+	ghClient, err := github.NewClient(&config.Config{GitHubClientID: "id", GitHubClientSecret: "secret", GitHubBaseURL: ghServer.URL})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	nextID := 40
+	store := &mockStorage{
+		getRunFunc: func(ctx context.Context, id int) (*models.WorkflowRun, error) {
+			return &models.WorkflowRun{ID: id, RepoID: 7, GitHubID: 555}, nil
+		},
+		hasRepoAccessFunc: func(ctx context.Context, userID, repoID int) (bool, error) {
+			return true, nil
+		},
+		getRepositoryFunc: func(ctx context.Context, id int) (*models.Repository, error) {
+			return &models.Repository{ID: id, FullName: "acme/widgets"}, nil
+		},
+		upsertJobFunc: func(ctx context.Context, job *models.WorkflowJob) (*models.WorkflowJob, error) {
+			nextID++
+			stored := *job
+			stored.ID = nextID
+			return &stored, nil
+		},
+	}
+	h := newTestHandler(store)
+	h.ghClient = ghClient
+
+	req := withURLParam(withUser(httptest.NewRequest(http.MethodGet, "/api/runs/5/jobs?refresh=true", nil), &models.User{ID: 2, AccessToken: "token"}), "id", "5")
+	rec := httptest.NewRecorder()
+	h.GetRunJobs(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var jobs []models.WorkflowJob
+	if err := json.Unmarshal(rec.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	}
+	for _, job := range jobs {
+		if job.ID == 0 {
+			t.Errorf("job %d (%s) returned without its stored id", job.GitHubID, job.Name)
+		}
+		if job.RunID != 5 {
+			t.Errorf("job %d stored under run %d, want 5", job.GitHubID, job.RunID)
+		}
+	}
+	if jobs[0].GitHubID != 111 || jobs[1].GitHubID != 112 {
+		t.Errorf("expected GitHub ids 111 and 112 in order, got %d and %d", jobs[0].GitHubID, jobs[1].GitHubID)
 	}
 }
 

@@ -524,6 +524,44 @@ func TestUpsertAndGetJob(t *testing.T) {
 	}
 }
 
+func TestUpsertJob_MovedStartKeepsOneRowAndID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStorage()
+
+	queuedAt := time.Date(2026, 10, 5, 15, 13, 35, 0, time.UTC)
+	queued, err := s.UpsertJob(ctx, &models.WorkflowJob{GitHubID: 3001, RunID: 1, Name: "Resolve release tag", Status: "queued", StartedAt: queuedAt})
+	if err != nil {
+		t.Fatalf("UpsertJob (queued) failed: %v", err)
+	}
+
+	startedAt := queuedAt.Add(4 * time.Second)
+	completedAt := startedAt.Add(5 * time.Second)
+	runner := "GitHub Actions 42"
+	conclusion := "success"
+	done, err := s.UpsertJob(ctx, &models.WorkflowJob{
+		GitHubID: 3001, RunID: 1, Name: "Resolve release tag", Status: "completed", Conclusion: &conclusion,
+		RunnerName: &runner, StartedAt: startedAt, CompletedAt: &completedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpsertJob (completed) failed: %v", err)
+	}
+	if done.ID != queued.ID {
+		t.Errorf("expected the same internal id %d, got %d", queued.ID, done.ID)
+	}
+
+	jobs, err := s.ListJobsForRun(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListJobsForRun failed: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected a single row for the job, got %d", len(jobs))
+	}
+	got := jobs[0]
+	if got.Status != "completed" || !got.StartedAt.Equal(startedAt) || got.RunnerName == nil || *got.RunnerName != runner {
+		t.Errorf("expected the stored job to carry the latest status, started_at and runner, got %+v", got)
+	}
+}
+
 func TestListJobsForRun(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStorage()

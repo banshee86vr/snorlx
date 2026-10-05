@@ -1530,14 +1530,14 @@ func (h *Handler) GetRunJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var savedJobs []models.WorkflowJob
+	savedJobs := make([]models.WorkflowJob, 0, len(ghJobs))
 	for _, ghJob := range ghJobs {
-		job := h.convertWorkflowJob(ghJob, id)
-		if _, err := h.storage.UpsertJob(r.Context(), job); err != nil {
+		saved, err := h.storage.UpsertJob(r.Context(), h.convertWorkflowJob(ghJob, id))
+		if err != nil {
 			log.Error().Err(err).Int64("job_id", ghJob.GetID()).Msg("Failed to save job")
 			continue
 		}
-		savedJobs = append(savedJobs, *job)
+		savedJobs = append(savedJobs, *saved)
 	}
 
 	_ = json.NewEncoder(w).Encode(savedJobs)

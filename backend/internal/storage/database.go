@@ -849,7 +849,7 @@ func (d *DatabaseStorage) ListJobsForRun(ctx context.Context, runID int) ([]mode
 		SELECT id, github_id, run_id, name, status, conclusion, runner_name, runner_group,
 		       labels, steps, started_at, completed_at, duration_seconds, created_at
 		FROM workflow_jobs WHERE run_id = $1
-		ORDER BY started_at
+		ORDER BY started_at, github_id
 	`, runID)
 	if err != nil {
 		return nil, err
@@ -890,23 +890,78 @@ func (d *DatabaseStorage) GetJob(ctx context.Context, id int) (*models.WorkflowJ
 	return &job, nil
 }
 
+// UpsertJob keeps exactly one row per GitHub job id.
+//
+// GitHub reports started_at as the queue time while a job waits and moves it
+// to the real start once a runner picks the job up. started_at is also the
+// hypertable partition column, so it cannot be updated in place and a plain
+// ON CONFLICT (github_id, started_at) would insert a second row. Rows whose
+// started_at moved are deleted and re-inserted under the same internal id, so
+// the frontend and the per-job log endpoint keep a stable reference.
 func (d *DatabaseStorage) UpsertJob(ctx context.Context, job *models.WorkflowJob) (*models.WorkflowJob, error) {
-	_, err := d.pool.Exec(ctx, `
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var keepID *int
+	var keepCreatedAt *time.Time
+	var existingID int
+	var existingCreatedAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT id, created_at FROM workflow_jobs
+		WHERE github_id = $1
+		ORDER BY started_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, job.GitHubID).Scan(&existingID, &existingCreatedAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		keepID = &existingID
+		keepCreatedAt = &existingCreatedAt
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM workflow_jobs WHERE github_id = $1 AND started_at <> $2
+	`, job.GitHubID, job.StartedAt); err != nil {
+		return nil, err
+	}
+
+	err = tx.QueryRow(ctx, `
 		INSERT INTO workflow_jobs (
-			github_id, run_id, run_github_id, name, status, conclusion, runner_name, runner_group,
-			labels, steps, started_at, completed_at, duration_seconds
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			id, github_id, run_id, run_github_id, name, status, conclusion, runner_name, runner_group,
+			labels, steps, started_at, completed_at, duration_seconds, created_at
+		) VALUES (
+			COALESCE($1, nextval(pg_get_serial_sequence('workflow_jobs', 'id'))),
+			$2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			COALESCE($15, NOW())
+		)
 		ON CONFLICT (github_id, started_at) DO UPDATE SET
+			name = EXCLUDED.name,
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
+			runner_name = EXCLUDED.runner_name,
+			runner_group = EXCLUDED.runner_group,
+			labels = EXCLUDED.labels,
 			completed_at = EXCLUDED.completed_at,
 			duration_seconds = EXCLUDED.duration_seconds,
 			steps = EXCLUDED.steps
+		RETURNING id, created_at
 	`,
-		job.GitHubID, job.RunID, job.GitHubID, job.Name, job.Status, job.Conclusion, job.RunnerName, job.RunnerGroup,
-		job.Labels, job.Steps, job.StartedAt, job.CompletedAt, job.DurationSeconds,
-	)
-	return job, err
+		keepID, job.GitHubID, job.RunID, job.GitHubID, job.Name, job.Status, job.Conclusion, job.RunnerName, job.RunnerGroup,
+		job.Labels, job.Steps, job.StartedAt, job.CompletedAt, job.DurationSeconds, keepCreatedAt,
+	).Scan(&job.ID, &job.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return job, nil
 }
 
 // ===== Deployments =====
@@ -1588,6 +1643,10 @@ CREATE INDEX IF NOT EXISTS idx_workflow_jobs_run_id ON workflow_jobs(run_id, sta
 CREATE INDEX IF NOT EXISTS idx_workflow_jobs_github_id ON workflow_jobs(github_id);
 -- Unique index for upsert (hypertable: must include partitioning column started_at).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_jobs_github_id ON workflow_jobs(github_id, started_at);
+-- Earlier upserts kept a stale row when GitHub moved a job's started_at from the
+-- queue time to the real start. Keep only the newest row per GitHub job id.
+DELETE FROM workflow_jobs stale USING workflow_jobs fresh
+WHERE stale.github_id = fresh.github_id AND stale.started_at < fresh.started_at;
 
 -- Deployments table
 CREATE TABLE IF NOT EXISTS deployments (
