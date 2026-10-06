@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/banshee86vr/snorlx/compare/v2.0.1...v2.1.0) (2026-10-06)
+
+
+### Features
+
+* add RUN_POLL_INTERVAL configuration for live polling ([#330](https://github.com/banshee86vr/snorlx/issues/330)) ([b68c423](https://github.com/banshee86vr/snorlx/commit/b68c4239a32f38f215ba112dfa5440496d563408))
+* enhance job handling and storage consistency ([#328](https://github.com/banshee86vr/snorlx/issues/328)) ([54d8cea](https://github.com/banshee86vr/snorlx/commit/54d8ceab89937c6110c07a6c7dda29dbf5fd3567))
+
+
+### Bug Fixes
+
+* enhance layout and responsiveness across components ([#332](https://github.com/banshee86vr/snorlx/issues/332)) ([c013e6e](https://github.com/banshee86vr/snorlx/commit/c013e6e2e61e8f41e5af870361d55cf893040815))
+
 ## [2.0.1](https://github.com/banshee86vr/snorlx/compare/v2.0.0...v2.0.1) (2026-10-05)
 
 
