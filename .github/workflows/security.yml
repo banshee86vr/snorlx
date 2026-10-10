@@ -207,7 +207,9 @@ jobs:
         run: govulncheck ./...
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+        # v2.29.0 cannot typecheck Go 1.27.2. This pseudo-version is the
+        # unreleased toolchain update that does (commit 7b1b5cebe).
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.1-0.20261009120814-7b1b5cebe007
 
       - name: Run gosec
         run: gosec -fmt sarif -out gosec-results.sarif ./...
