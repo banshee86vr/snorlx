@@ -1,7 +1,7 @@
 # Build stage: use pnpm from repo root (build context must be repo root).
 # BUILDPLATFORM keeps the Node build native; the nginx stage stays per-arch.
 # Images are pinned by digest; Dependabot and Renovate move the digest when the tag moves.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS builder
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
 
 WORKDIR /app
 
