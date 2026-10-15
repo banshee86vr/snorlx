@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/banshee86vr/snorlx/compare/v2.1.0...v2.1.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/go-chi/chi/v5 to v5.4.0 ([#338](https://github.com/banshee86vr/snorlx/issues/338)) ([d2f8a47](https://github.com/banshee86vr/snorlx/commit/d2f8a476cc8a37369c367e0ad9e2bc81e3e6b768))
+
 ## [2.1.0](https://github.com/banshee86vr/snorlx/compare/v2.0.1...v2.1.0) (2026-10-06)
 
 
