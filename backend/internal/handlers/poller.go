@@ -12,7 +12,7 @@ import (
 
 	"snorlx/backend/internal/models"
 
-	gh "github.com/google/go-github/v92/github"
+	gh "github.com/google/go-github/v93/github"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/oauth2"
 )

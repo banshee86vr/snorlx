@@ -29,7 +29,7 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm run build
 
 # Production stage: unprivileged nginx (listens on 8080, runs as uid 101, writes only under /tmp)
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
 
 USER root
 # Pull every package fix published since the base image was built

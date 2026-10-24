@@ -81,7 +81,7 @@ database:
   image:
     repository: timescale/timescaledb
     tag: 2.31.0-pg16
-    digest: sha256:75d58b53f3337a6babd3a1cce5e503f2300bdede62dd7d743651deb1a95b6d76
+    digest: sha256:322ae364eca3321cf2a48f1ef31213b87843413b3cf8feeebf54e999a26bb731
     pullPolicy: IfNotPresent
   storage:
     size: 10Gi

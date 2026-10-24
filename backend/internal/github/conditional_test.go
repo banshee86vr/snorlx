@@ -10,7 +10,7 @@ import (
 
 	"snorlx/backend/internal/config"
 
-	ghLib "github.com/google/go-github/v92/github"
+	ghLib "github.com/google/go-github/v93/github"
 	"golang.org/x/oauth2"
 )
 

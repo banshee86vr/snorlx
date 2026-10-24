@@ -9,7 +9,7 @@ import (
 	"snorlx/backend/internal/models"
 	"snorlx/backend/internal/websocket"
 
-	gh "github.com/google/go-github/v92/github"
+	gh "github.com/google/go-github/v93/github"
 )
 
 func workflowJobEvent(repoGitHubID, runGitHubID, jobID int64) *gh.WorkflowJobEvent {

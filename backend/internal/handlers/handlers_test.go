@@ -16,7 +16,7 @@ import (
 	"snorlx/backend/internal/version"
 
 	"github.com/go-chi/chi/v5"
-	gh "github.com/google/go-github/v92/github"
+	gh "github.com/google/go-github/v93/github"
 )
 
 // ===== Mock Storage =====
