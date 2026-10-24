@@ -1,6 +1,6 @@
 {
   "name": "snorlx-mcp",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "private": true,
   "type": "module",
   "description": "MCP server for the Snorlx CI/CD dashboard API",

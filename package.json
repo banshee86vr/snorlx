@@ -1,6 +1,6 @@
 {
   "name": "snorlx",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "CI/CD Dashboard for GitHub Actions - Centralized visibility over workflows, metrics, and costs",
   "private": true,
   "scripts": {

@@ -2,4 +2,4 @@
 package version
 
 // Version is the Snorlx release. release-please updates this line.
-const Version = "2.1.2" // x-release-please-version
+const Version = "2.1.3" // x-release-please-version
