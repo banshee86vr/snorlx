@@ -1,7 +1,7 @@
 # Build stage: use a 1.27 image for availability; go.mod pins the patch for govulncheck.
 # BUILDPLATFORM keeps the Go compile native while buildx targets arm64.
 # Images are pinned by digest; Dependabot and Renovate move the digest when the tag moves.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -installsuffix c
     -ldflags="-s -w" -o server ./cmd/server
 
 # Final stage
-FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # Create a non-root user with a fixed numeric uid so Kubernetes runAsNonRoot can verify it
 RUN addgroup -S -g 1000 snorlx && adduser -S -u 1000 -G snorlx snorlx
