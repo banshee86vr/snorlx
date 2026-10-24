@@ -80,7 +80,7 @@ database:
   # Internal database settings
   image:
     repository: timescale/timescaledb
-    tag: 2.30.0-pg16
+    tag: 2.31.0-pg16
     digest: sha256:75d58b53f3337a6babd3a1cce5e503f2300bdede62dd7d743651deb1a95b6d76
     pullPolicy: IfNotPresent
   storage:

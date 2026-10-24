@@ -29,7 +29,7 @@ onlyBuiltDependencies:
   - esbuild
 
 overrides:
-  lucide-react: 1.57.0
+  lucide-react: 1.61.0
   zod: 4.6.5
   '@babel/core': '>=7.29.6 <9'
   rollup: '>=4.59.0'
