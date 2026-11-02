@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.4](https://github.com/banshee86vr/snorlx/compare/v2.1.3...v2.1.4) (2026-11-02)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/jackc/pgx/v5 to v5.12.0 ([#359](https://github.com/banshee86vr/snorlx/issues/359)) ([3f7f0a7](https://github.com/banshee86vr/snorlx/commit/3f7f0a7884accd51fc9c59e92369162816959636))
+
 ## [2.1.3](https://github.com/banshee86vr/snorlx/compare/v2.1.2...v2.1.3) (2026-10-24)
 
 
