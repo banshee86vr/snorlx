@@ -320,7 +320,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, h.authCookie(h.sessionCookieName(), sessionID, 0, expiresAt))
 
 	// Redirect to frontend
-	http.Redirect(w, r, h.config.FrontendURL, http.StatusTemporaryRedirect)
+	http.Redirect(w, r, h.config.FrontendURL+h.config.BasePath, http.StatusTemporaryRedirect)
 }
 
 // isLoginAllowed applies ALLOWED_GITHUB_USERS and ALLOWED_GITHUB_ORGS. With no allowlist every

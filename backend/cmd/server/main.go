@@ -210,7 +210,7 @@ func main() {
 	// Create server
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           r,
+		Handler:           httpmiddleware.StripBasePath(cfg.BasePath, r),
 		ReadTimeout:       15 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      65 * time.Second,

@@ -100,3 +100,24 @@ func TestRequestLogger_PassesThrough(t *testing.T) {
 		t.Fatalf("logger must pass the request through; called=%v status=%d", called, rec.Code)
 	}
 }
+
+func TestStripBasePath(t *testing.T) {
+	tests := []struct{ name, base, target, want string }{
+		{"strips the prefix", "/snorlx", "/snorlx/api/runs", "/api/runs"},
+		{"unprefixed path passes through", "/snorlx", "/health", "/health"},
+		{"similar prefix is not stripped", "/snorlx", "/snorlxy/api", "/snorlxy/api"},
+		{"nested base path", "/tools/snorlx", "/tools/snorlx/ws", "/ws"},
+		{"empty base path is a no-op", "", "/snorlx/api", "/snorlx/api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got = r.URL.Path })
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			StripBasePath(tt.base, next).ServeHTTP(httptest.NewRecorder(), req)
+			if got != tt.want {
+				t.Errorf("path = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

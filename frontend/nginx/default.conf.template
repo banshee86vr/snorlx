@@ -1,4 +1,4 @@
-# Rendered by the nginx image entrypoint: ${BACKEND_UPSTREAM} is substituted from the environment.
+# Rendered by the nginx image entrypoint: ${BACKEND_UPSTREAM} and ${BASE_PATH} are substituted from the environment.
 # The frontend serves the SPA and proxies /api and /ws to the backend so the browser only ever
 # talks to one origin: cookies stay first-party, CSP connect-src stays 'self', and the backend
 # CSRF/WebSocket origin checks compare against the public URL.
@@ -9,6 +9,9 @@ server {
     server_tokens off;
     root /usr/share/nginx/html;
     index index.html;
+
+    # Drop the base path (empty at the host root) before the locations below are matched
+    rewrite ^${BASE_PATH}(/.*)$ $1;
 
     # Gzip compression
     gzip on;
@@ -52,9 +55,11 @@ server {
         include /etc/nginx/snippets/security-headers.conf;
     }
 
-    # SPA routing: serve index.html for all routes
+    # SPA routing: serve index.html for all routes, with the base path set in its <base> tag
     location / {
         try_files $uri $uri/ /index.html;
+        sub_filter '<base href="/" />' '<base href="${BASE_PATH}/" />';
+        sub_filter_once on;
     }
 
     # Health check for container and Kubernetes probes

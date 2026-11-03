@@ -1,5 +1,6 @@
 import { GitBranch, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { API_URL } from '../lib/basePath';
 
 function GitHubMark({ className }: { className?: string }) {
   return (
@@ -15,7 +16,7 @@ export function Login() {
   const handleLogin = () => {
     setIsLoading(true);
     // Redirect to backend OAuth endpoint
-    window.location.href = `${import.meta.env.VITE_API_URL || ''}/api/auth/login`;
+    window.location.href = `${API_URL}/api/auth/login`;
   };
   
   return (

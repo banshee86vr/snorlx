@@ -427,3 +427,41 @@ func TestLoad_RunPollInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeBasePath(t *testing.T) {
+	valid := map[string]string{
+		"":              "",
+		"/":             "",
+		"/snorlx":       "/snorlx",
+		"snorlx/":       "/snorlx",
+		"/tools/snorlx": "/tools/snorlx",
+	}
+	for raw, want := range valid {
+		if got, err := normalizeBasePath(raw); err != nil || got != want {
+			t.Errorf("normalizeBasePath(%q) = %q, %v, want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"/a//b", "/snor lx", "/snorlx?x=1", "/a.b", "https://host/snorlx"} {
+		if got, err := normalizeBasePath(raw); err == nil {
+			t.Errorf("normalizeBasePath(%q) = %q, want an error", raw, got)
+		}
+	}
+}
+
+func TestLoad_BasePath(t *testing.T) {
+	t.Setenv("DEV_MODE", "true")
+	t.Setenv("BASE_PATH", "/snorlx/")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.BasePath != "/snorlx" {
+		t.Errorf("expected /snorlx, got %q", cfg.BasePath)
+	}
+
+	t.Setenv("BASE_PATH", "/bad path")
+	if _, err := Load(); err == nil {
+		t.Error("expected an error for an invalid BASE_PATH")
+	}
+}

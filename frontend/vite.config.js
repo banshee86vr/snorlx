@@ -1,14 +1,33 @@
 import { readFileSync } from "node:fs";
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+// Dev only: the app is reached under BASE_PATH (shell or repo-root .env, like the backend).
+// The proxy drops the prefix, as nginx does in the container.
+const rootDir = fileURLToPath(new URL("..", import.meta.url));
+const configured = process.env.BASE_PATH ?? loadEnv("development", rootDir, "").BASE_PATH ?? "";
+const trimmed = configured.replace(/^\/+|\/+$/g, "");
+const basePath = trimmed && `/${trimmed}`;
+const dropBasePath = (path) => path.slice(basePath.length);
 // https://vitejs.dev/config/
 export default defineConfig({
+    // Relative asset URLs: the <base> tag in index.html sets the base path at runtime
+    base: "./",
     define: {
         __APP_VERSION__: JSON.stringify(pkg.version),
     },
-    plugins: [tailwindcss(), react()],
+    plugins: [
+        tailwindcss(),
+        react(),
+        {
+            // In the container nginx sets the base path in the <base> tag
+            name: "dev-base-tag",
+            apply: "serve",
+            transformIndexHtml: (html) => html.replace('<base href="/" />', `<base href="${basePath}/" />`),
+        },
+    ],
     resolve: {
         alias: {
             "@": "/src",
@@ -31,9 +50,10 @@ export default defineConfig({
         port: 5173,
         proxy: {
             // REST API proxy (no WebSocket)
-            "/api": {
+            [`${basePath}/api`]: {
                 target: "http://localhost:8080",
                 changeOrigin: true,
+                rewrite: dropBasePath,
                 configure: (proxy) => {
                     // Silence proxy errors for long-running requests (proxy is http-proxy at runtime)
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,9 +71,10 @@ export default defineConfig({
                 },
             },
             // WebSocket proxy (separate entry like krabbx)
-            "/ws": {
+            [`${basePath}/ws`]: {
                 target: "http://localhost:8080",
                 ws: true,
+                rewrite: dropBasePath,
             },
         },
     },

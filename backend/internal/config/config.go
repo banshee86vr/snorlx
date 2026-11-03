@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,8 @@ type Config struct {
 	Port        string
 	LogLevel    string
 	FrontendURL string
+	// BasePath is the URL path the dashboard is served under, such as /snorlx. Empty is the host root.
+	BasePath string
 	// CookieSecure sets the Secure flag on auth cookies. Defaults to true when FrontendURL is https.
 	CookieSecure bool
 	// TrustedProxyCIDRs lists the networks whose X-Forwarded-For / X-Real-IP headers are honoured.
@@ -99,6 +102,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	basePath, err := normalizeBasePath(os.Getenv("BASE_PATH"))
+	if err != nil {
+		return nil, err
+	}
+
 	cookieSecure := strings.HasPrefix(frontendURL, "https://")
 	if raw := os.Getenv("COOKIE_SECURE"); raw != "" {
 		parsed, err := strconv.ParseBool(raw)
@@ -122,6 +130,7 @@ func Load() (*Config, error) {
 		Port:                getEnv("PORT", "8080"),
 		LogLevel:            getEnv("LOG_LEVEL", "info"),
 		FrontendURL:         frontendURL,
+		BasePath:            basePath,
 		CookieSecure:        cookieSecure,
 		TrustedProxyCIDRs:   trustedProxies,
 		StorageMode:         storageMode,
@@ -198,6 +207,21 @@ func normalizeFrontendURL(raw string, isDevMode bool) (string, error) {
 		return "", fmt.Errorf("FRONTEND_URL %q uses http on a non-loopback host; use https in production or set DEV_MODE=true", raw)
 	}
 	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+var basePathPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$`)
+
+// normalizeBasePath returns BASE_PATH as /segment[/segment] without a trailing slash,
+// or "" for the host root.
+func normalizeBasePath(raw string) (string, error) {
+	trimmed := strings.Trim(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return "", nil
+	}
+	if !basePathPattern.MatchString(trimmed) {
+		return "", fmt.Errorf("BASE_PATH must be a path such as /snorlx made of letters, digits, '-' and '_', got %q", raw)
+	}
+	return "/" + trimmed, nil
 }
 
 func isLoopbackHost(host string) bool {

@@ -50,6 +50,8 @@ spec:
               value: database
             - name: FRONTEND_URL
               value: {{ include "snorlx.frontendUrl" . | quote }}
+            - name: BASE_PATH
+              value: {{ include "snorlx.basePath" . | quote }}
             - name: TRUSTED_PROXY_CIDRS
               value: {{ .Values.backend.trustedProxyCidrs | quote }}
             - name: ALLOWED_GITHUB_USERS
