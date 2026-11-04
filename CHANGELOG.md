@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.2.0](https://github.com/banshee86vr/snorlx/compare/v2.1.4...v2.2.0) (2026-11-04)
+
+
+### Features
+
+* Add Buttons to switch pages in Runs page ([#363](https://github.com/banshee86vr/snorlx/issues/363)) ([6c9e8d0](https://github.com/banshee86vr/snorlx/commit/6c9e8d04ee3b372a3325ea2ec37b460dc56640f6))
+* Add waiting status to filter options on Run page ([#362](https://github.com/banshee86vr/snorlx/issues/362)) ([c2e3930](https://github.com/banshee86vr/snorlx/commit/c2e39307863a13ade27b63c5d5dbeaff60877588))
+* Make base path under which to host Snorlx configurable ([#364](https://github.com/banshee86vr/snorlx/issues/364)) ([4d2ca7e](https://github.com/banshee86vr/snorlx/commit/4d2ca7ed5a953c0ad636abb38dde7d7c6d5c6c4a))
+
 ## [2.1.4](https://github.com/banshee86vr/snorlx/compare/v2.1.3...v2.1.4) (2026-11-02)
 
 
