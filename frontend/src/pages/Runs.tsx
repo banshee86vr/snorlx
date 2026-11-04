@@ -95,6 +95,7 @@ export function Runs() {
             <option value="completed">Completed</option>
             <option value="in_progress">In Progress</option>
             <option value="queued">Queued</option>
+            <option value="waiting">Waiting</option>
           </select>
           <select
             value={filters.conclusion}
