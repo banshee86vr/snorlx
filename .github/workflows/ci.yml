@@ -168,6 +168,13 @@ jobs:
           grep -q 'kind: NetworkPolicy' /tmp/snorlx-full.yaml
           grep -q 'kind: HorizontalPodAutoscaler' /tmp/snorlx-full.yaml
           grep -q 'kind: PodDisruptionBudget' /tmp/snorlx-full.yaml
+          # The base path reaches both containers and prefixes the ingress paths
+          helm template snorlx helm/snorlx $base_args \
+            --set basePath=/snorlx \
+            --set ingress.enabled=true \
+            --set 'ingress.hosts[0].host=dash.example.com' > /tmp/snorlx-basepath.yaml
+          test "$(grep -A1 'name: BASE_PATH' /tmp/snorlx-basepath.yaml | grep -c 'value: "/snorlx"')" = 2
+          grep -q 'path: /snorlx/api' /tmp/snorlx-basepath.yaml
           # Rendering without a public origin must fail instead of producing a broken deployment
           if helm template snorlx helm/snorlx > /dev/null 2>&1; then
             echo "chart rendered without backend.frontendUrl or ingress" >&2

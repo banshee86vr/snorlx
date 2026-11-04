@@ -28,6 +28,22 @@ func TrustedRealIP(trusted []*net.IPNet) func(http.Handler) http.Handler {
 	}
 }
 
+// StripBasePath removes the base path (such as /snorlx) from request paths, so routes are
+// registered without it. Requests without it, like pod probes, pass through unchanged.
+func StripBasePath(base string, next http.Handler) http.Handler {
+	if base == "" {
+		return next
+	}
+	stripped := http.StripPrefix(base, next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == base || strings.HasPrefix(r.URL.Path, base+"/") {
+			stripped.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func peerIsTrusted(remoteAddr string, trusted []*net.IPNet) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {

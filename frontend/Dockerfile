@@ -27,6 +27,8 @@ WORKDIR /app/frontend
 ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm run build
+# nginx rewrites this tag at startup; fail the build if it ever changes
+RUN grep -qF '<base href="/" />' dist/index.html
 
 # Production stage: unprivileged nginx (listens on 8080, runs as uid 101, writes only under /tmp)
 FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
@@ -47,6 +49,8 @@ COPY frontend/nginx/default.conf.template /etc/nginx/templates/default.conf.temp
 
 # Backend address used by the /api and /ws proxy locations
 ENV BACKEND_UPSTREAM=http://backend:8080
+# URL path the app is served under, such as /snorlx (no trailing slash). Empty is the host root.
+ENV BASE_PATH=
 
 EXPOSE 8080
 

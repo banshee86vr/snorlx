@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { applyLiveUpdate, type LiveMessage } from "../lib/liveUpdates";
+import { BASE_PATH } from "../lib/basePath";
 
 interface SocketContextValue {
 	isConnected: boolean;
@@ -30,7 +31,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
 
 	useEffect(() => {
 		const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-		const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+		const wsUrl = `${wsProtocol}//${window.location.host}${BASE_PATH}/ws`;
 
 		let ws: WebSocket | null = null;
 		let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;

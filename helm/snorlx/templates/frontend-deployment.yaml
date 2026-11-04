@@ -33,6 +33,8 @@ spec:
             # nginx proxies /api and /ws to the backend so the browser talks to one origin
             - name: BACKEND_UPSTREAM
               value: {{ include "snorlx.backendUpstream" . | quote }}
+            - name: BASE_PATH
+              value: {{ include "snorlx.basePath" . | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.frontend.port }}

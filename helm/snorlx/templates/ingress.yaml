@@ -23,27 +23,28 @@ spec:
       secretName: {{ .secretName }}
     {{- end }}
   {{- end }}
+  {{- $basePath := include "snorlx.basePath" . }}
   rules:
     {{- range .Values.ingress.hosts }}
     - host: {{ .host | quote }}
       http:
         paths:
           # API and WebSocket go straight to the backend; everything else is the SPA.
-          - path: /api
+          - path: {{ $basePath }}/api
             pathType: Prefix
             backend:
               service:
                 name: {{ include "snorlx.fullname" $ }}-backend
                 port:
                   number: {{ $.Values.service.backend.port }}
-          - path: /ws
+          - path: {{ $basePath }}/ws
             pathType: Exact
             backend:
               service:
                 name: {{ include "snorlx.fullname" $ }}-backend
                 port:
                   number: {{ $.Values.service.backend.port }}
-          - path: /
+          - path: {{ default "/" $basePath }}
             pathType: Prefix
             backend:
               service:

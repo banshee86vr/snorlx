@@ -269,7 +269,7 @@ This project uses GitHub OAuth App for user authentication (simpler than GitHub 
 
    - **Application name**: `Snorlx Dashboard` (or your preferred name)
    - **Homepage URL**: the value of `FRONTEND_URL` (`http://localhost:5173` in development)
-   - **Authorization callback URL**: `<FRONTEND_URL>/api/auth/callback` (`http://localhost:5173/api/auth/callback` in development; the frontend proxies `/api` to the backend)
+   - **Authorization callback URL**: `<FRONTEND_URL>/api/auth/callback` (`http://localhost:5173/api/auth/callback` in development; the frontend proxies `/api` to the backend). With a [`BASE_PATH`](#serving-under-a-sub-path) it is `<FRONTEND_URL><BASE_PATH>/api/auth/callback`
 
 4. Click **Register application**
 
@@ -335,9 +335,19 @@ With webhooks on every repository you can lengthen `RUN_POLL_INTERVAL` or set it
 | `LOG_FORMAT`          | `json` for structured logs, anything else for console output                                                          | console                               |
 | `SESSION_SECRET`      | Derives the key that encrypts stored GitHub tokens. Required outside `DEV_MODE`, minimum 32 characters                | Required                              |
 | `FRONTEND_URL`        | Public origin (`scheme://host`) used for CORS, CSRF, WebSocket origin checks and the OAuth redirect. Plain `http` is accepted only for localhost outside `DEV_MODE` | `http://localhost:5173`               |
+| `BASE_PATH`           | URL path the dashboard is served under, such as `/snorlx`. Set it on the backend and the frontend container ([details](#serving-under-a-sub-path)) | empty (host root)                     |
 | `COOKIE_SECURE`       | Force the `Secure` flag on auth cookies                                                                               | `true` when `FRONTEND_URL` is https   |
 | `TRUSTED_PROXY_CIDRS` | Comma-separated networks whose `X-Forwarded-For` / `X-Real-IP` are trusted (ingress, reverse proxy)                   | none (peer address is used)           |
 | `VITE_API_URL`        | Backend API URL baked into the frontend build. Leave empty: the frontend proxies `/api` and `/ws` same-origin         | empty                                 |
+
+#### Serving under a sub-path
+
+To serve the dashboard at `https://<host><base_path>` instead of `https://<host>`, set `BASE_PATH=<base_path>` on both the backend and the frontend container. No rebuild is needed. With the Helm chart, set `basePath: <base_path>`; it also prefixes the ingress paths.
+
+- `<base_path>` starts with `/` and has no trailing slash. Use letters, digits, `-` and `_`, with `/` between segments.
+- `FRONTEND_URL` stays the origin only (`https://<host>`).
+- Include the path when you register the OAuth callback (`<FRONTEND_URL><base_path>/api/auth/callback`) and the webhook URL (`<FRONTEND_URL><base_path>/api/webhooks/github`).
+- `pnpm run dev` reads `BASE_PATH` from the root `.env`; the app is then only reachable at `http://localhost:5173<base_path>`.
 
 #### GitHub OAuth Configuration
 

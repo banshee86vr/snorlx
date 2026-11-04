@@ -118,6 +118,9 @@ github:
 session:
   secret: ""
 
+# URL path the dashboard is served under, such as /snorlx. Empty is the host root.
+basePath: ""
+
 # Ingress configuration
 ingress:
   enabled: false

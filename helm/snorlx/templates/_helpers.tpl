@@ -133,6 +133,19 @@ cloud load balancer in front of the ingress). Without any of these, rendering st
 {{- end }}
 
 {{/*
+basePath normalized to /segment[/segment], or empty for the host root.
+*/}}
+{{- define "snorlx.basePath" -}}
+{{- $path := trimAll "/" (trim (default "" .Values.basePath)) }}
+{{- if $path }}
+{{- if not (regexMatch "^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+)*$" $path) }}
+{{- fail (printf "basePath must be a path such as /snorlx made of letters, digits, '-' and '_', got %q" .Values.basePath) }}
+{{- end }}
+{{- printf "/%s" $path }}
+{{- end }}
+{{- end }}
+
+{{/*
 Backend URL used by the frontend nginx proxy for /api and /ws.
 */}}
 {{- define "snorlx.backendUpstream" -}}
