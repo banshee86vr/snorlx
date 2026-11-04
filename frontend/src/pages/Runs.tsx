@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Play, CheckCircle, XCircle, Clock, Loader2, ExternalLink, Filter, Search, X } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Clock, Loader2, ExternalLink, Filter, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { runsApi } from '../services/api';
 import { cn, formatRelativeTime, formatDuration, getStatusColor } from '../lib/utils';
 import { useFallbackRefetchInterval } from '../hooks/useFallbackRefetchInterval';
@@ -9,6 +9,7 @@ import type { RunFilters } from '../types';
 
 export function Runs() {
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<RunFilters>({
     status: '',
     conclusion: '',
@@ -18,13 +19,20 @@ export function Runs() {
   const fallbackInterval = useFallbackRefetchInterval(30_000);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['runs', filters],
-    queryFn: () => runsApi.list(filters),
+    queryKey: ['runs', filters, page],
+    queryFn: () => runsApi.list(filters, page),
     refetchInterval: fallbackInterval,
+    placeholderData: keepPreviousData,
   });
+
+  const pagination = data?.pagination;
+  const total = pagination?.total ?? 0;
+  const totalPages = pagination ? Math.max(1, Math.ceil(pagination.total / pagination.page_size)) : 1;
+  const currentPage = pagination?.page ?? page;
 
   const handleFilterChange = (key: keyof RunFilters, value: string) => {
     setFilters({ ...filters, [key]: value });
+    setPage(1);
   };
 
   // Filter runs by search query (client-side) - only by run name or repository name
@@ -228,7 +236,41 @@ export function Runs() {
         ) : (
           <div className="px-4 py-8 text-center">
             <Play className="mx-auto mb-3 h-12 w-12 text-gray-300 dark:text-gray-600" />
-            <p className="text-gray-500 dark:text-gray-400">No runs found</p>
+            <p className="text-gray-500 dark:text-gray-400">
+              {search.trim() && total > 0 ? 'No runs on this page match your search' : 'No runs found'}
+            </p>
+          </div>
+        )}
+
+        {total > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Showing {(currentPage - 1) * (pagination?.page_size ?? 50) + 1}–
+              {Math.min(currentPage * (pagination?.page_size ?? 50), total)} of {total} runs
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none dark:bg-gray-800 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Previous
+              </button>
+              <span className="text-sm text-gray-500 dark:text-gray-400 px-2">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:pointer-events-none dark:bg-gray-800 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
       </div>
