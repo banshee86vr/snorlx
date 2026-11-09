@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/banshee86vr/snorlx/compare/v2.2.0...v2.2.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/oauth2 to v0.38.0 ([#381](https://github.com/banshee86vr/snorlx/issues/381)) ([7b157b3](https://github.com/banshee86vr/snorlx/commit/7b157b3c0c1a6efc72228fbe277eddd460c7bb3d))
+
 ## [2.2.0](https://github.com/banshee86vr/snorlx/compare/v2.1.4...v2.2.0) (2026-11-04)
 
 
