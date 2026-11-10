@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -installsuffix c
     -ldflags="-s -w" -o server ./cmd/server
 
 # Final stage
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 # Create a non-root user with a fixed numeric uid so Kubernetes runAsNonRoot can verify it
 RUN addgroup -S -g 1000 snorlx && adduser -S -u 1000 -G snorlx snorlx
