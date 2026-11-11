@@ -1,7 +1,7 @@
 # Build stage: use a 1.27 image for availability; go.mod pins the patch for govulncheck.
 # BUILDPLATFORM keeps the Go compile native while buildx targets arm64.
 # Images are pinned by digest; Dependabot and Renovate move the digest when the tag moves.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS builder
 
 WORKDIR /app
 
