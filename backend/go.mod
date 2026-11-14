@@ -8,7 +8,7 @@ require (
 	github.com/go-chi/httprate v0.16.1
 	github.com/google/go-github/v93 v93.0.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/joho/godotenv v1.5.1
 	github.com/rs/zerolog v1.35.1
 	golang.org/x/oauth2 v0.38.0
