@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/banshee86vr/snorlx/compare/v2.2.1...v2.2.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** update all dependencies ([#388](https://github.com/banshee86vr/snorlx/issues/388)) ([f118bab](https://github.com/banshee86vr/snorlx/commit/f118bab9f520a45db85747f538fc427b0d3469ae))
+
 ## [2.2.1](https://github.com/banshee86vr/snorlx/compare/v2.2.0...v2.2.1) (2026-11-09)
 
 
