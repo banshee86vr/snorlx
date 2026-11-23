@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { useSocket } from './SocketContext';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -13,6 +13,8 @@ interface SyncProgress {
 interface SyncContextType {
   sync: SyncProgress;
   startSync: () => void;
+  /** Ends the progress display after the sync request was rejected. */
+  failSync: () => void;
 }
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
@@ -26,10 +28,26 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     currentRepo: null,
   });
 
-  const { lastMessage } = useSocket();
+  const { subscribe } = useSocket();
   const queryClient = useQueryClient();
+  // The pending "reset after complete" timer; a new sync must cancel it or it would wipe its progress.
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelReset = useCallback(() => {
+    if (resetTimer.current) {
+      clearTimeout(resetTimer.current);
+      resetTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => cancelReset, [cancelReset]);
+
+  const failSync = useCallback(() => {
+    setSync(prev => ({ ...prev, isSyncing: false }));
+  }, []);
 
   const startSync = useCallback(() => {
+    cancelReset();
     setSync({
       isSyncing: true,
       syncedCount: 0,
@@ -37,17 +55,18 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       progress: 0,
       currentRepo: null,
     });
-  }, []);
+  }, [cancelReset]);
 
-  // Handle WebSocket messages for sync events (defer state updates to satisfy react-hooks/set-state-in-effect)
+  // Handle WebSocket messages for sync events. Every message is delivered, in order: the backend
+  // sends start and the first progress back to back, and a "latest message" state would drop one.
   useEffect(() => {
-    if (!lastMessage) return;
+    return subscribe(message => {
+      const { type } = message;
+      const data = (message.data ?? {}) as Record<string, unknown>;
 
-    const { type, data } = lastMessage as { type: string; data: Record<string, unknown> };
-
-    const apply = () => {
       switch (type) {
         case 'sync:start': {
+          cancelReset();
           setSync({
             isSyncing: true,
             syncedCount: 0,
@@ -85,7 +104,9 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ['dashboard'] });
           queryClient.invalidateQueries({ queryKey: ['pipelines'] });
           // Reset after 2 seconds
-          setTimeout(() => {
+          cancelReset();
+          resetTimer.current = setTimeout(() => {
+            resetTimer.current = null;
             setSync({
               isSyncing: false,
               syncedCount: 0,
@@ -104,12 +125,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           break;
         }
       }
-    };
-    queueMicrotask(apply);
-  }, [lastMessage, queryClient]);
+    });
+  }, [subscribe, cancelReset, queryClient]);
 
   return (
-    <SyncContext.Provider value={{ sync, startSync }}>
+    <SyncContext.Provider value={{ sync, startSync, failSync }}>
       {children}
     </SyncContext.Provider>
   );
