@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { useEffect } from "react";
 import { act, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SocketProvider } from "./SocketContext";
+import { SocketProvider, useSocket } from "./SocketContext";
 
 /** Minimal WebSocket double: records sent frames and lets the test fire open/message. */
 class FakeWebSocket {
@@ -118,5 +119,31 @@ describe("SocketProvider presence", () => {
 		act(() => setVisibility("visible"));
 
 		expect(queryClient.getQueryState(["pipelines", "active"])?.isInvalidated).toBe(false);
+	});
+
+	it("hands every message of a burst to subscribers, in order", () => {
+		const received: string[] = [];
+		function Subscriber() {
+			const { subscribe } = useSocket();
+			useEffect(() => subscribe((message) => received.push(message.type)), [subscribe]);
+			return null;
+		}
+		render(
+			<QueryClientProvider client={queryClient}>
+				<SocketProvider>
+					<Subscriber />
+				</SocketProvider>
+			</QueryClientProvider>,
+		);
+		const socket = FakeWebSocket.instances[0];
+		act(() => socket.open());
+
+		act(() => {
+			socket.receive({ type: "sync:start", data: { total: 2 } });
+			socket.receive({ type: "sync:progress", data: { synced: 1, total: 2 } });
+			socket.receive({ type: "sync:complete", data: {} });
+		});
+
+		expect(received).toEqual(["sync:start", "sync:progress", "sync:complete"]);
 	});
 });

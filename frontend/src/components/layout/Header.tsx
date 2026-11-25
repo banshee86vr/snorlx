@@ -34,7 +34,7 @@ export function Header() {
 	const [showUserMenu, setShowUserMenu] = useState(false);
 	const [showMobileMenu, setShowMobileMenu] = useState(false);
 	const { isConnected } = useSocket();
-	const { sync, startSync } = useSync();
+	const { sync, startSync, failSync } = useSync();
 	const { isDark, setTheme } = useTheme();
 	const { user, logout } = useAuth();
 	const navigate = useNavigate();
@@ -49,10 +49,8 @@ export function Header() {
 
 		startSync();
 
-		// Fire and forget - progress and completion come via WebSocket
-		api.syncRepositories().catch(() => {
-			// Silent error handling - sync status is tracked via WebSocket
-		});
+		// Progress and completion come via WebSocket; a rejected request must not leave the overlay up
+		api.syncRepositories().catch(failSync);
 	};
 
 	useEffect(() => {
