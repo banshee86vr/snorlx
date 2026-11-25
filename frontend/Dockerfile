@@ -31,7 +31,8 @@ RUN pnpm run build
 RUN grep -qF '<base href="/" />' dist/index.html
 
 # Production stage: unprivileged nginx (listens on 8080, runs as uid 101, writes only under /tmp)
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+# nginx/* is the current unprivileged registry; nginxinc/* has no 1.30.7.
+FROM nginx/nginx-unprivileged:stable-alpine@sha256:637c35e46af7bc0dd3d3bcf7162e004e13ab3b370fde7cd416e2ac410b5a985a
 
 USER root
 # Pull every package fix published since the base image was built
