@@ -2,8 +2,8 @@ apiVersion: v2
 name: snorlx
 description: CI/CD Dashboard for GitHub Actions with DevOps metrics
 type: application
-version: 2.3.0
-appVersion: 2.3.0
+version: 2.4.0
+appVersion: 2.4.0
 maintainers:
   - name: banshee86vr
 keywords:
