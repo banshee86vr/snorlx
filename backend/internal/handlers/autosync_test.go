@@ -12,6 +12,19 @@ import (
 	"snorlx/backend/internal/models"
 )
 
+// isRegistered and registered read the guard under its lock: passes end on their own goroutines.
+func (g *syncGuard) isRegistered(userID int) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.running[userID] != nil
+}
+
+func (g *syncGuard) registered() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.running)
+}
+
 func TestSyncGuard_BackgroundRunsAreSpacedAndExclusive(t *testing.T) {
 	g := newSyncGuard()
 	ctx := context.Background()
@@ -350,13 +363,13 @@ func TestAutoSync_ASlowUserDoesNotHoldUpTheOthers(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if run := f.h.syncs.running[1]; run == nil {
+	if !f.h.syncs.isRegistered(1) {
 		t.Fatal("the slow user's pass should still be registered")
 	}
 	close(release)
 	wg.Wait()
-	if len(f.h.syncs.running) != 0 {
-		t.Fatalf("every pass must unregister itself, left %v", f.h.syncs.running)
+	if n := f.h.syncs.registered(); n != 0 {
+		t.Fatalf("every pass must unregister itself, %d left", n)
 	}
 }
 
