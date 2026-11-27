@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/banshee86vr/snorlx/compare/v2.2.3...v2.3.0) (2026-11-27)
+
+
+### Features
+
+* **sync:** refresh repositories and workflows in the background ([#399](https://github.com/banshee86vr/snorlx/issues/399)) ([5156d98](https://github.com/banshee86vr/snorlx/commit/5156d9868b6193a4349980d5f955582c7b67f752))
+
 ## [2.2.3](https://github.com/banshee86vr/snorlx/compare/v2.2.2...v2.2.3) (2026-11-25)
 
 
