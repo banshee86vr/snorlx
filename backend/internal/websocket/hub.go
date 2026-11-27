@@ -316,6 +316,12 @@ func NewClient(id string, userID int, hub *Hub, conn *websocket.Conn) *Client {
 	}
 }
 
+// Outbound is the buffered queue of messages waiting to be written to the connection. Tests in
+// other packages use it to assert delivered events without a real socket.
+func (c *Client) Outbound() <-chan []byte {
+	return c.send
+}
+
 // Active reports whether the client's page is visible.
 func (c *Client) Active() bool {
 	return c.active.Load()

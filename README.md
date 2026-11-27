@@ -302,6 +302,10 @@ The app requests these OAuth scopes:
 
 Runs update on their own while somebody has a page visible. The browser reports its visibility over the WebSocket, and the backend runs a live poller for users with a visible page: every `RUN_POLL_INTERVAL` (default `10s`) it re-reads each queued or in-progress run and its jobs, and every six intervals it lists the newest runs of every visible repository to pick up runs started since the last sync. Every request is conditional (`If-None-Match`), so a resource that did not change answers `304`, costs no GitHub rate-limit budget and writes nothing. Changes are pushed to the browser over the WebSocket; a page that becomes visible again triggers a pass right away and refetches what it missed. While the socket is down, pages poll the backend (never GitHub) until it reconnects, and those requests count as presence for 45 seconds (the same applies to API token clients such as MCP). Background tabs and closed browsers mean no GitHub traffic. The **Refresh** buttons stay as an escape hatch: they run the same conditional passes right away. See [ADR 0007](docs/adr/0007-server-side-live-run-polling.md).
 
+### Automatic sync
+
+After you pressed **Sync** once, the backend repeats it for you every `AUTO_SYNC_INTERVAL` (default `30m`) while you have a page open. The background pass is incremental: new repositories are synced in full, known ones only re-read their workflows when GitHub reports a change (a conditional request, `304` costs no rate-limit budget), runs stay with the live poller, and a score is recomputed only when it is missing or older than 7 days. Repositories that became accessible to you since your last sync are imported too. Only one sync of a user runs at a time: pressing **Sync** interrupts a background pass, and a second press while a manual sync runs is refused. The **Sync** button remains a full re-import.
+
 ### Optional: Webhooks
 
 Webhooks deliver changes the instant GitHub reports them and let the poller answer `304` for everything it checks. Configure one in your repository or organization settings:
@@ -368,6 +372,7 @@ To serve the dashboard at `https://<host><base_path>` instead of `https://<host>
 | `SYNC_LIMIT`        | No       | `0` (all)   | Limit number of repos to sync                                                                                 |
 | `SYNC_REPOS`        | No       | -           | Comma-separated list of specific repos to sync                                                                |
 | `RUN_POLL_INTERVAL` | No       | `10s`       | How often active runs are refreshed from GitHub for watching users (conditional requests). Minimum `5s`, `0` disables the poller |
+| `AUTO_SYNC_INTERVAL` | No      | `30m`       | How often new repositories, changed workflows and old scores are synced in the background for watching users who pressed Sync before. Minimum `5m`, `0` disables it |
 
 ## API Endpoints
 

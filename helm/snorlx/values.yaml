@@ -50,6 +50,8 @@ backend:
     LOG_FORMAT: json
     # Live poller cadence for active runs (conditional GitHub requests). Minimum 5s, "0" disables.
     RUN_POLL_INTERVAL: 10s
+    # Background sync of repositories and workflows for watching users. Minimum 5m, "0" disables.
+    AUTO_SYNC_INTERVAL: 30m
 
 # Frontend configuration
 frontend:

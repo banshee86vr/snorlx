@@ -35,6 +35,13 @@ const defaultRunPollInterval = 10 * time.Second
 // minRunPollInterval protects the GitHub rate limit from a mistyped RUN_POLL_INTERVAL.
 const minRunPollInterval = 5 * time.Second
 
+// defaultAutoSyncInterval is how stale a watching user's repositories and workflows may get
+// before a background sync refreshes them; minAutoSyncInterval protects the rate limit.
+const (
+	defaultAutoSyncInterval = 30 * time.Minute
+	minAutoSyncInterval     = 5 * time.Minute
+)
+
 // Config holds all application configuration
 type Config struct {
 	// Server
@@ -77,6 +84,10 @@ type Config struct {
 	// RunPollInterval is the cadence of the live poller that refreshes active workflow runs for
 	// watching users. Zero disables the background poller; webhooks and manual refresh still work.
 	RunPollInterval time.Duration
+
+	// AutoSyncInterval is how often an incremental sync runs in the background for watching users
+	// who synced before. Zero disables it; the Sync button still works.
+	AutoSyncInterval time.Duration
 }
 
 // Load reads configuration from environment variables
@@ -121,6 +132,10 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	autoSyncInterval, err := parseAutoSyncInterval(os.Getenv("AUTO_SYNC_INTERVAL"))
+	if err != nil {
+		return nil, err
+	}
 	runPollInterval, err := parseRunPollInterval(os.Getenv("RUN_POLL_INTERVAL"))
 	if err != nil {
 		return nil, err
@@ -145,6 +160,7 @@ func Load() (*Config, error) {
 		SyncLimit:           syncLimit,
 		SyncRepos:           splitList(os.Getenv("SYNC_REPOS")),
 		RunPollInterval:     runPollInterval,
+		AutoSyncInterval:    autoSyncInterval,
 	}
 
 	if !isDevMode {
@@ -251,6 +267,26 @@ func parseRunPollInterval(raw string) (time.Duration, error) {
 	}
 	if d < minRunPollInterval {
 		return 0, fmt.Errorf("RUN_POLL_INTERVAL must be at least %s or 0 to disable, got %q", minRunPollInterval, raw)
+	}
+	return d, nil
+}
+
+// parseAutoSyncInterval accepts a Go duration such as 30m or 2h. Empty means the default, "0"
+// disables the background sync, and anything shorter than minAutoSyncInterval is rejected.
+func parseAutoSyncInterval(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultAutoSyncInterval, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil && raw != "0" {
+		return 0, fmt.Errorf("AUTO_SYNC_INTERVAL must be a duration such as 30m or 2h (0 disables), got %q", raw)
+	}
+	if d == 0 {
+		return 0, nil
+	}
+	if d < minAutoSyncInterval {
+		return 0, fmt.Errorf("AUTO_SYNC_INTERVAL must be at least %s or 0 to disable, got %q", minAutoSyncInterval, raw)
 	}
 	return d, nil
 }

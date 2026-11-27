@@ -479,6 +479,25 @@ func (c *Client) ListRecentWorkflowRunsIfChanged(ctx context.Context, client *gi
 	return page.WorkflowRuns, newETag, true, nil
 }
 
+// ListWorkflowsIfChanged lists the workflows of a repository unless the first page's ETag still
+// matches etag. A repository with more than one page of workflows is read in full and returns an
+// empty ETag, because later pages can change while the first does not.
+func (c *Client) ListWorkflowsIfChanged(ctx context.Context, client *github.Client, owner, repo, etag string) ([]*github.Workflow, string, bool, error) {
+	path := fmt.Sprintf("repos/%s/%s/actions/workflows?per_page=100", owner, repo)
+	page, newETag, changed, err := conditionalGet[github.Workflows](ctx, client, path, etag)
+	if err != nil || !changed {
+		return nil, newETag, changed, err
+	}
+	if page.GetTotalCount() <= len(page.Workflows) {
+		return page.Workflows, newETag, true, nil
+	}
+	all, err := c.ListWorkflows(ctx, client, owner, repo)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return all, "", true, nil
+}
+
 // ListWorkflowJobs lists jobs for a workflow run
 func (c *Client) ListWorkflowJobs(ctx context.Context, client *github.Client, owner, repo string, runID int64) ([]*github.WorkflowJob, error) {
 	var allJobs []*github.WorkflowJob

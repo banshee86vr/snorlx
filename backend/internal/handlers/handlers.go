@@ -55,6 +55,8 @@ type Handler struct {
 	// wakeActive and wakeDiscovery make the poll loops run early when a page becomes visible.
 	wakeActive    chan struct{}
 	wakeDiscovery chan struct{}
+	// syncs keeps the background sync from running while a sync of the same user runs.
+	syncs *syncGuard
 }
 
 // New creates a new Handler
@@ -69,6 +71,7 @@ func New(cfg *config.Config, store storage.Storage, ghClient *github.Client, wsH
 		etags:         newETagCache(),
 		wakeActive:    make(chan struct{}, 1),
 		wakeDiscovery: make(chan struct{}, 1),
+		syncs:         newSyncGuard(),
 	}
 	if wsHub != nil {
 		wsHub.SetActivationListener(h.UserActivated)
@@ -941,6 +944,18 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 	userID := user.ID
 	accessToken := user.AccessToken
 
+	// Only one sync of a user runs at a time. A background pass is interrupted, a second manual
+	// sync is refused.
+	run, wait, ok := h.syncs.beginManual(userID)
+	if !ok {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "already_running",
+			"message": "A sync is already running",
+		})
+		return
+	}
+
 	// Return immediately - sync runs in background
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -950,12 +965,23 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 
 	// Run sync in background; do not use r.Context(): it is cancelled when the handler returns (after 202),
 	// which would immediately cancel the sync and trigger sync:error. Use Background so sync runs to completion.
-	go h.runSync(context.Background(), userID, accessToken) // #nosec G118 -- intentional: sync must outlive the HTTP request
+	go func() { // #nosec G118 -- intentional: sync must outlive the HTTP request
+		defer h.syncs.end(userID, run)
+		if wait != nil {
+			<-wait // the interrupted background pass has unwound
+		}
+		h.runSync(context.Background(), userID, accessToken, false, run)
+	}()
 }
 
 // runSync performs the actual sync operation in the background. Every repository it stores is
 // granted to userID, which is what makes it visible to that user afterwards.
-func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
+//
+// An incremental sync (see RunAutoSync) is silent and cheap: a repository that is already stored
+// is only re-read when GitHub reports that its workflows changed, its runs are left to the live
+// poller, and its score is recomputed only when it is missing or old. New repositories are synced
+// in full. The caller registered run with h.syncs and ends it when runSync returns.
+func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, incremental bool, run *syncRun) {
 
 	// Create GitHub client with user's token
 	token := &oauth2.Token{AccessToken: accessToken}
@@ -964,8 +990,10 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 	// Fetch user's repositories from GitHub
 	ghRepos, err := h.ghClient.ListUserRepositories(ctx, client)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to fetch repositories from GitHub")
-		h.wsHub.SendSyncError(userID, "Failed to fetch repositories from GitHub")
+		log.Error().Err(err).Bool("incremental", incremental).Msg("Failed to fetch repositories from GitHub")
+		if !incremental {
+			h.wsHub.SendSyncError(userID, "Failed to fetch repositories from GitHub")
+		}
 		return
 	}
 
@@ -976,11 +1004,29 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 	syncedRepos := 0
 	syncedWorkflows := 0
 	syncedRuns := 0
+	changed := false
 
-	h.wsHub.SendSyncStart(userID, total)
+	if !incremental {
+		h.wsHub.SendSyncStart(userID, total)
+	}
 
 	for i, ghRepo := range ghRepos {
-		h.wsHub.SendSyncProgress(userID, i, total, ghRepo.GetFullName())
+		if ctx.Err() != nil {
+			break
+		}
+		if !incremental {
+			h.wsHub.SendSyncProgress(userID, i, total, ghRepo.GetFullName())
+		}
+
+		// Known means this user already holds the repository. One that exists only because another
+		// user synced it is new to this user and gets the full treatment, so it shows up for them.
+		known := false
+		if incremental {
+			stored, err := h.storage.GetRepositoryByGitHubID(ctx, ghRepo.GetID())
+			if err == nil && stored != nil {
+				known, _ = h.storage.HasRepositoryAccess(ctx, userID, stored.ID)
+			}
+		}
 
 		// Convert and save repository
 		repo := &models.Repository{
@@ -1011,11 +1057,31 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 		owner := ghRepo.GetOwner().GetLogin()
 		repoName := ghRepo.GetName()
 
-		ghWorkflows, err := h.ghClient.ListWorkflows(ctx, client, owner, repoName)
-		if err != nil {
-			log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflows")
-			continue
+		needScore := h.scorer != nil && (!known || h.scoreIsStale(ctx, savedRepo.ID))
+
+		var ghWorkflows []*gh.Workflow
+		workflowsETag := ""
+		if known && !needScore {
+			// Nothing but the workflow list can be news here: ask GitHub conditionally and move on
+			// when it answers 304. Runs are the live poller's job.
+			var workflowsChanged bool
+			key := workflowsETagKey(savedRepo.ID)
+			ghWorkflows, workflowsETag, workflowsChanged, err = h.ghClient.ListWorkflowsIfChanged(ctx, client, owner, repoName, h.etags.get(key))
+			if err != nil {
+				log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflows")
+				continue
+			}
+			if !workflowsChanged {
+				continue
+			}
+		} else {
+			ghWorkflows, err = h.ghClient.ListWorkflows(ctx, client, owner, repoName)
+			if err != nil {
+				log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflows")
+				continue
+			}
 		}
+		changed = true
 
 		savedWorkflows := make([]models.Workflow, 0, len(ghWorkflows))
 		for _, ghWorkflow := range ghWorkflows {
@@ -1027,29 +1093,35 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 			syncedWorkflows++
 			savedWorkflows = append(savedWorkflows, *savedWorkflow)
 		}
-
-		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
-		ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
-		if err != nil {
-			log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflow runs")
-			continue
+		// The ETag is remembered only once every workflow is stored, so a failed write is retried.
+		if workflowsETag != "" && len(savedWorkflows) == len(ghWorkflows) {
+			h.etags.set(workflowsETagKey(savedRepo.ID), workflowsETag)
 		}
 
-		workflows := indexWorkflows(savedWorkflows)
-		for _, ghRun := range ghRuns {
-			run, ok := h.runFromGitHub(ghRun, savedRepo.ID, workflows)
-			if !ok {
+		// Fetch and save workflow runs for this repository (limit to 50 recent runs for faster sync)
+		if !known {
+			ghRuns, err := h.ghClient.ListWorkflowRuns(ctx, client, owner, repoName, nil, 50)
+			if err != nil {
+				log.Warn().Err(err).Str("repo", ghRepo.GetFullName()).Msg("Failed to fetch workflow runs")
 				continue
 			}
-			if _, err := h.storage.UpsertRun(ctx, run); err != nil {
-				log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
-				continue
+
+			workflows := indexWorkflows(savedWorkflows)
+			for _, ghRun := range ghRuns {
+				run, ok := h.runFromGitHub(ghRun, savedRepo.ID, workflows)
+				if !ok {
+					continue
+				}
+				if _, err := h.storage.UpsertRun(ctx, run); err != nil {
+					log.Error().Err(err).Int64("run_id", ghRun.GetID()).Msg("Failed to save workflow run")
+					continue
+				}
+				syncedRuns++
 			}
-			syncedRuns++
 		}
 
 		// Score repository (documentation, security, CI/CD, etc.)
-		if h.scorer != nil {
+		if h.scorer != nil && (!incremental || needScore) {
 			meta := &scorer.RepoMeta{
 				HasWorkflows:  len(ghWorkflows) > 0,
 				WorkflowNames: make([]string, 0, len(ghWorkflows)),
@@ -1081,7 +1153,9 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string) {
 		Int("runs", syncedRuns).
 		Msg("Sync completed")
 
-	h.wsHub.SendSyncComplete(userID, syncedRepos, syncedWorkflows, syncedRuns)
+	// An incremental sync that stored nothing stays silent; otherwise the browser refetches. One
+	// that a manual sync took over from must not report completion over the manual sync.
+	h.announceComplete(ctx, userID, run, incremental, changed, syncedRepos, syncedWorkflows, syncedRuns)
 }
 
 // runSyncOneRepo syncs workflows and runs for a single repository (light sync).
