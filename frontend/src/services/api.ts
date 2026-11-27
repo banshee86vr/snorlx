@@ -16,6 +16,15 @@ import type {
 } from "../types";
 import { API_URL } from "../lib/basePath";
 
+/** State of the signed-in user's current or most recent repository sync. */
+export interface SyncStatus {
+	running: boolean;
+	total: number;
+	synced: number;
+	current: string;
+	error?: string;
+}
+
 async function fetchApi<T>(
 	endpoint: string,
 	options?: RequestInit,
@@ -73,6 +82,7 @@ export const repositoriesApi = {
 	get: (id: number) => fetchApi<Repository>(`/api/repositories/${id}`),
 	sync: () =>
 		fetchApi<{ status: string }>("/api/repositories/sync", { method: "POST" }),
+	syncStatus: () => fetchApi<SyncStatus>("/api/repositories/sync/status"),
 	syncRepo: (id: number) =>
 		fetchApi<{ status: string; workflows: number; runs: number }>(
 			`/api/repositories/${id}/sync`,
@@ -181,4 +191,5 @@ export const tokensApi = {
 // Convenience export for common operations
 export const api = {
 	syncRepositories: () => repositoriesApi.sync(),
+	syncStatus: () => repositoriesApi.syncStatus(),
 };

@@ -86,6 +86,9 @@ type Hub struct {
 
 	activationMu sync.RWMutex
 	onActivated  func(userID int)
+
+	// syncs remembers the latest sync:* state of each user (see SyncStatus).
+	syncs syncStatuses
 }
 
 // NewHub creates a new WebSocket hub
@@ -221,6 +224,7 @@ func (h *Hub) SendDeploymentUpdate(userIDs []int, deployment interface{}) {
 
 // SendSyncStart tells the user who started a sync how many repositories it covers.
 func (h *Hub) SendSyncStart(userID, total int) {
+	h.syncs.set(userID, SyncStatus{Running: true, Total: total})
 	h.SendToUser(userID, Message{
 		Type: "sync:start",
 		Data: map[string]interface{}{"total": total},
@@ -229,6 +233,7 @@ func (h *Hub) SendSyncStart(userID, total int) {
 
 // SendSyncProgress reports sync progress to the user who started it.
 func (h *Hub) SendSyncProgress(userID, synced, total int, current string) {
+	h.syncs.set(userID, SyncStatus{Running: true, Total: total, Synced: synced, Current: current})
 	progress := 0
 	if total > 0 {
 		progress = (synced * 100) / total
@@ -246,6 +251,11 @@ func (h *Hub) SendSyncProgress(userID, synced, total int, current string) {
 
 // SendSyncComplete reports the sync outcome to the user who started it.
 func (h *Hub) SendSyncComplete(userID, repos, workflows, runs int) {
+	h.syncs.update(userID, func(st *SyncStatus) {
+		st.Running = false
+		st.Error = ""
+		st.Synced = st.Total
+	})
 	h.SendToUser(userID, Message{
 		Type: "sync:complete",
 		Data: map[string]interface{}{
@@ -258,6 +268,10 @@ func (h *Hub) SendSyncComplete(userID, repos, workflows, runs int) {
 
 // SendSyncError reports a sync failure to the user who started it.
 func (h *Hub) SendSyncError(userID int, message string) {
+	h.syncs.update(userID, func(st *SyncStatus) {
+		st.Running = false
+		st.Error = message
+	})
 	h.SendToUser(userID, Message{
 		Type: "sync:error",
 		Data: map[string]interface{}{"message": message},

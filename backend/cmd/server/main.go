@@ -182,6 +182,7 @@ func main() {
 			r.Get("/repositories/{id}", h.GetRepository)
 			r.Get("/repositories/{id}/score", h.GetRepositoryScore)
 			r.Post("/repositories/sync", h.SyncRepositories)
+			r.Get("/repositories/sync/status", h.SyncStatus)
 			r.Post("/repositories/{id}/sync", h.SyncRepository)
 			r.Post("/repositories/backfill-deployment-runs", h.BackfillDeploymentRuns)
 

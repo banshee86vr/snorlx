@@ -18,13 +18,20 @@ vi.mock("./SocketContext", () => ({
 	}),
 }));
 
+const mockStatus = vi.fn();
+
+vi.mock("../services/api", () => ({
+	api: { syncStatus: () => mockStatus() },
+}));
+
 function push(message: LiveMessage) {
 	listeners.forEach((listener) => listener(message));
 }
 
 describe("SyncProvider", () => {
+	let queryClient: QueryClient;
 	const wrapper = ({ children }: { children: ReactNode }) => (
-		<QueryClientProvider client={new QueryClient()}>
+		<QueryClientProvider client={queryClient}>
 			<SyncProvider>{children}</SyncProvider>
 		</QueryClientProvider>
 	);
@@ -32,6 +39,8 @@ describe("SyncProvider", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		listeners.clear();
+		queryClient = new QueryClient();
+		mockStatus.mockReset();
 	});
 
 	afterEach(() => {
@@ -97,5 +106,90 @@ describe("SyncProvider", () => {
 
 		act(() => result.current.failSync());
 		expect(result.current.sync.isSyncing).toBe(false);
+	});
+
+	describe("without WebSocket events", () => {
+		it("shows the progress the status endpoint reports", async () => {
+			mockStatus.mockResolvedValue({ running: true, total: 10, synced: 5, current: "acme/e" });
+			const { result } = renderHook(() => useSync(), { wrapper });
+
+			act(() => result.current.startSync());
+			act(() => result.current.syncAccepted());
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(result.current.sync).toMatchObject({
+				isSyncing: true,
+				syncedCount: 5,
+				totalToSync: 10,
+				progress: 50,
+				currentRepo: "acme/e",
+			});
+		});
+
+		it("finishes and reloads the data when the backend reports the sync as done", async () => {
+			const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+			mockStatus.mockResolvedValue({ running: false, total: 10, synced: 10, current: "acme/j" });
+			const { result } = renderHook(() => useSync(), { wrapper });
+
+			act(() => result.current.startSync());
+			act(() => result.current.syncAccepted());
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(result.current.sync).toMatchObject({ isSyncing: false, progress: 100 });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["repositories"] });
+
+			// Polling stops once the sync is over
+			mockStatus.mockClear();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10000);
+			});
+			expect(mockStatus).not.toHaveBeenCalled();
+		});
+
+		it("ends the overlay without a data reload when the sync failed", async () => {
+			const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+			mockStatus.mockResolvedValue({ running: false, total: 0, synced: 0, current: "", error: "Failed to fetch repositories from GitHub" });
+			const { result } = renderHook(() => useSync(), { wrapper });
+
+			act(() => result.current.startSync());
+			act(() => result.current.syncAccepted());
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(2000);
+			});
+
+			expect(result.current.sync.isSyncing).toBe(false);
+			expect(invalidate).not.toHaveBeenCalled();
+		});
+
+		it("does not ask the backend before the request was accepted", async () => {
+			const { result } = renderHook(() => useSync(), { wrapper });
+
+			act(() => result.current.startSync());
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10000);
+			});
+
+			expect(mockStatus).not.toHaveBeenCalled();
+			expect(result.current.sync.isSyncing).toBe(true);
+		});
+
+		it("keeps polling through a failed status request", async () => {
+			mockStatus
+				.mockRejectedValueOnce(new Error("network"))
+				.mockResolvedValue({ running: true, total: 4, synced: 1, current: "acme/a" });
+			const { result } = renderHook(() => useSync(), { wrapper });
+
+			act(() => result.current.startSync());
+			act(() => result.current.syncAccepted());
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(4000);
+			});
+
+			expect(result.current.sync).toMatchObject({ isSyncing: true, syncedCount: 1, progress: 25 });
+		});
 	});
 });

@@ -955,6 +955,9 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if h.wsHub != nil {
+		h.wsHub.SyncQueued(userID)
+	}
 
 	// Return immediately - sync runs in background
 	w.WriteHeader(http.StatusAccepted)
