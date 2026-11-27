@@ -93,6 +93,19 @@ func (g *syncGuard) active(userID int, run *syncRun) bool {
 	return g.running[userID] == run
 }
 
+// withCurrent runs fn only while run is still the sync of userID. The lock is held across the
+// check and fn so a beginManual takeover cannot land between them (for example between deciding
+// to emit sync:complete and actually sending it).
+func (g *syncGuard) withCurrent(userID int, run *syncRun, fn func()) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.running[userID] != run {
+		return false
+	}
+	fn()
+	return true
+}
+
 // end unregisters run and releases whoever waits for it. The goroutine that registered the run
 // calls it, once the run is over; calling it again does nothing.
 func (g *syncGuard) end(userID int, run *syncRun) {
@@ -170,11 +183,21 @@ func (h *Handler) autoSyncUser(ctx context.Context, userID int, run *syncRun) {
 	h.runSync(ctx, userID, user.AccessToken, true, run)
 }
 
-// mayAnnounce reports whether an incremental pass may tell the browser to refetch: it stored
-// something, was not interrupted, and is still the user's sync. A pass that a manual sync took over
-// from stays silent, so it cannot close the manual sync's progress overlay.
-func (h *Handler) mayAnnounce(ctx context.Context, userID int, run *syncRun, changed bool) bool {
-	return changed && ctx.Err() == nil && h.syncs.active(userID, run)
+// announceComplete tells the browser the sync finished. A manual sync always announces. An
+// incremental pass announces only when it stored something, was not cancelled, and is still the
+// user's sync: the guard check and the WebSocket send run under the same lock, so a manual sync
+// that takes over cannot land between them and have its progress overlay closed by this pass.
+func (h *Handler) announceComplete(ctx context.Context, userID int, run *syncRun, incremental, changed bool, repos, workflows, runs int) {
+	if !incremental {
+		h.wsHub.SendSyncComplete(userID, repos, workflows, runs)
+		return
+	}
+	if !changed || ctx.Err() != nil {
+		return
+	}
+	h.syncs.withCurrent(userID, run, func() {
+		h.wsHub.SendSyncComplete(userID, repos, workflows, runs)
+	})
 }
 
 // scoreIsStale reports whether a repository has no score or an old one.

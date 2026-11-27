@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"snorlx/backend/internal/models"
+	"snorlx/backend/internal/websocket"
 )
 
 // isRegistered and registered read the guard under its lock: passes end on their own goroutines.
@@ -99,25 +101,102 @@ func TestSyncGuard_UsersAreIndependent(t *testing.T) {
 	}
 }
 
-func TestMayAnnounce(t *testing.T) {
+func TestAnnounceComplete(t *testing.T) {
 	h := newTestHandler(&mockStorage{})
+	h.wsHub = websocket.NewHub()
+	go h.wsHub.Run()
+	client := websocket.NewClient("announce", 1, h.wsHub, nil)
+	h.wsHub.Register(client)
+	time.Sleep(20 * time.Millisecond)
+
+	receive := func() (string, bool) {
+		t.Helper()
+		select {
+		case data := <-client.Outbound():
+			var msg websocket.Message
+			if err := json.Unmarshal(data, &msg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			return msg.Type, true
+		case <-time.After(150 * time.Millisecond):
+			return "", false
+		}
+	}
+
 	bg, bgCtx, _ := h.syncs.beginIfDue(context.Background(), 1, 0)
 
-	if !h.mayAnnounce(bgCtx, 1, bg, true) {
-		t.Error("an undisturbed pass that stored something may announce it")
+	h.announceComplete(bgCtx, 1, bg, true, false, 1, 2, 3)
+	if _, ok := receive(); ok {
+		t.Fatal("a pass that stored nothing must stay silent")
 	}
-	if h.mayAnnounce(bgCtx, 1, bg, false) {
-		t.Error("a pass that stored nothing stays silent")
+
+	h.announceComplete(bgCtx, 1, bg, true, true, 1, 2, 3)
+	if typ, ok := receive(); !ok || typ != "sync:complete" {
+		t.Fatalf("an undisturbed pass that stored something may announce, got %q ok=%v", typ, ok)
 	}
 
 	manual, _, _ := h.syncs.beginManual(1)
-	if h.mayAnnounce(context.Background(), 1, bg, true) {
-		t.Error("a pass taken over by a manual sync must not announce completion over it")
+	h.announceComplete(context.Background(), 1, bg, true, true, 1, 2, 3)
+	if _, ok := receive(); ok {
+		t.Fatal("a pass taken over by a manual sync must not announce completion over it")
 	}
-	if bgCtx.Err() == nil || h.mayAnnounce(bgCtx, 1, bg, true) {
-		t.Error("a cancelled pass must not announce")
+	if bgCtx.Err() == nil {
+		t.Fatal("the background pass must be cancelled")
 	}
-	_ = manual
+	h.announceComplete(bgCtx, 1, bg, true, true, 1, 2, 3)
+	if _, ok := receive(); ok {
+		t.Fatal("a cancelled pass must not announce")
+	}
+
+	// Manual syncs always announce, including after they took over.
+	h.announceComplete(context.Background(), 1, manual, false, true, 4, 5, 6)
+	if typ, ok := receive(); !ok || typ != "sync:complete" {
+		t.Fatalf("a manual sync must announce completion, got %q ok=%v", typ, ok)
+	}
+}
+
+func TestWithCurrent_HoldsLockAcrossCallback(t *testing.T) {
+	g := newSyncGuard()
+	run, _, ok := g.beginIfDue(context.Background(), 1, 0)
+	if !ok {
+		t.Fatal("setup")
+	}
+
+	// While withCurrent holds the lock for its callback, beginManual must wait. That is what
+	// closes the race between "still active?" and SendSyncComplete.
+	began := make(chan struct{})
+	release := make(chan struct{})
+	manualDone := make(chan struct{})
+	go func() {
+		<-began
+		_, _, _ = g.beginManual(1)
+		close(manualDone)
+	}()
+
+	called := g.withCurrent(1, run, func() {
+		close(began)
+		select {
+		case <-manualDone:
+			t.Error("beginManual must not finish while withCurrent holds the lock")
+		case <-time.After(30 * time.Millisecond):
+		}
+		close(release)
+	})
+	if !called {
+		t.Fatal("run is current")
+	}
+	<-release
+	select {
+	case <-manualDone:
+	case <-time.After(time.Second):
+		t.Fatal("beginManual must proceed once withCurrent unlocks")
+	}
+	if g.active(1, run) {
+		t.Fatal("manual sync must have taken over")
+	}
+	if g.withCurrent(1, run, func() { t.Error("must not run") }) {
+		t.Fatal("a taken-over run must not run withCurrent")
+	}
 }
 
 func TestSyncRepositories_RefusesASecondManualSync(t *testing.T) {

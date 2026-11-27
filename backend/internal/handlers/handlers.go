@@ -1155,10 +1155,7 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, i
 
 	// An incremental sync that stored nothing stays silent; otherwise the browser refetches. One
 	// that a manual sync took over from must not report completion over the manual sync.
-	if incremental && !h.mayAnnounce(ctx, userID, run, changed) {
-		return
-	}
-	h.wsHub.SendSyncComplete(userID, syncedRepos, syncedWorkflows, syncedRuns)
+	h.announceComplete(ctx, userID, run, incremental, changed, syncedRepos, syncedWorkflows, syncedRuns)
 }
 
 // runSyncOneRepo syncs workflows and runs for a single repository (light sync).
