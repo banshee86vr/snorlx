@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/banshee86vr/snorlx/compare/v2.3.0...v2.4.0) (2026-11-27)
+
+
+### Features
+
+* **sync:** report sync progress through a status endpoint as well ([#403](https://github.com/banshee86vr/snorlx/issues/403)) ([9b36d10](https://github.com/banshee86vr/snorlx/commit/9b36d10becb70eb617e7413e0d71a7ab0b25cc98))
+
 ## [2.3.0](https://github.com/banshee86vr/snorlx/compare/v2.2.3...v2.3.0) (2026-11-27)
 
 
