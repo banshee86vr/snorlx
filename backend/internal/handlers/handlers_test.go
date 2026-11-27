@@ -49,6 +49,7 @@ type mockStorage struct {
 	listUsersWithRepoAccessFunc func(ctx context.Context, repoID int) ([]int, error)
 	getRepoByGitHubIDFunc       func(ctx context.Context, githubID int64) (*models.Repository, error)
 	upsertWorkflowFunc          func(ctx context.Context, workflow *models.Workflow) (*models.Workflow, error)
+	getLatestScoreFunc          func(ctx context.Context, repoID int) (*models.RepositoryScore, error)
 }
 
 func (m *mockStorage) Close() error   { return nil }
@@ -265,6 +266,9 @@ func (m *mockStorage) UpsertRepositoryScore(ctx context.Context, score *models.R
 	return score, nil
 }
 func (m *mockStorage) GetLatestRepositoryScore(ctx context.Context, repoID int) (*models.RepositoryScore, error) {
+	if m.getLatestScoreFunc != nil {
+		return m.getLatestScoreFunc(ctx, repoID)
+	}
 	return nil, nil
 }
 func (m *mockStorage) ListLatestRepositoryScores(ctx context.Context, userID int) ([]models.RepositoryScore, error) {

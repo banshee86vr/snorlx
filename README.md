@@ -304,7 +304,7 @@ Runs update on their own while somebody has a page visible. The browser reports 
 
 ### Automatic sync
 
-After you pressed **Sync** once, the backend repeats it for you every `AUTO_SYNC_INTERVAL` (default `30m`) while you have a page open. The background pass is incremental: new repositories are synced in full, known ones only re-read their workflows when GitHub reports a change (a conditional request, `304` costs no rate-limit budget), runs stay with the live poller, and a score is recomputed only when it is missing or older than 7 days. The **Sync** button remains a full re-import.
+After you pressed **Sync** once, the backend repeats it for you every `AUTO_SYNC_INTERVAL` (default `30m`) while you have a page open. The background pass is incremental: new repositories are synced in full, known ones only re-read their workflows when GitHub reports a change (a conditional request, `304` costs no rate-limit budget), runs stay with the live poller, and a score is recomputed only when it is missing or older than 7 days. Repositories that became accessible to you since your last sync are imported too. Only one sync of a user runs at a time: pressing **Sync** interrupts a background pass, and a second press while a manual sync runs is refused. The **Sync** button remains a full re-import.
 
 ### Optional: Webhooks
 

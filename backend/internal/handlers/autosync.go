@@ -17,60 +17,102 @@ import (
 const (
 	// autoSyncCheckEvery is how often the loop looks for users whose sync is due.
 	autoSyncCheckEvery = time.Minute
+	// autoSyncWorkers bounds how many users are synced in the background at once.
+	autoSyncWorkers = 4
+	// autoSyncPassTimeout bounds one user's background sync; the next one starts after the interval.
+	autoSyncPassTimeout = 10 * time.Minute
 	// scoreMaxAge is how old a score may get before an incremental sync recomputes it.
 	scoreMaxAge = 7 * 24 * time.Hour
 )
 
 func workflowsETagKey(repoID int) string { return fmt.Sprintf("workflows:%d", repoID) }
 
-// syncGuard knows which users have a sync running and when each last started, so the background
-// sync neither overlaps a sync of the same user nor repeats one that just ran.
+// syncRun is one sync of one user, registered with the syncGuard.
+type syncRun struct {
+	manual bool
+	cancel context.CancelFunc // set for background runs, so a manual sync can interrupt them
+	done   chan struct{}      // closed when the run has ended
+	once   sync.Once
+}
+
+// syncGuard allows one sync per user at a time. The Sync button wins over the background sync: it
+// cancels a background pass that is running and starts once that pass has unwound, so the two
+// never write at once and a background pass cannot report completion over a manual sync. A second
+// manual sync is refused.
 type syncGuard struct {
 	mu      sync.Mutex
-	running map[int]int
+	running map[int]*syncRun
 	started map[int]time.Time
 }
 
 func newSyncGuard() *syncGuard {
-	return &syncGuard{running: make(map[int]int), started: make(map[int]time.Time)}
+	return &syncGuard{running: make(map[int]*syncRun), started: make(map[int]time.Time)}
 }
 
-// start registers a sync of userID. The Sync button always starts one: it never waits for the
-// background sync.
-func (g *syncGuard) start(userID int) {
+// beginManual registers a manual sync of userID. It returns false when another manual sync is
+// running. A background pass is cancelled instead; wait is then closed once that pass has ended and
+// the caller must not start syncing before that. wait is nil when nothing was running.
+func (g *syncGuard) beginManual(userID int) (run *syncRun, wait <-chan struct{}, ok bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.running[userID]++
+	if prev := g.running[userID]; prev != nil {
+		if prev.manual {
+			return nil, nil, false
+		}
+		prev.cancel()
+		wait = prev.done
+	}
+	run = &syncRun{manual: true, done: make(chan struct{})}
+	g.running[userID] = run
 	g.started[userID] = time.Now()
+	return run, wait, true
 }
 
-// startIfDue registers a background sync unless one of userID runs or the last one started less
-// than interval ago.
-func (g *syncGuard) startIfDue(userID int, interval time.Duration) bool {
+// beginIfDue registers a background sync unless one of userID runs or the last one started less
+// than interval ago. The returned context is cancelled when a manual sync takes over.
+func (g *syncGuard) beginIfDue(parent context.Context, userID int, interval time.Duration) (*syncRun, context.Context, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.running[userID] > 0 {
-		return false
+	if g.running[userID] != nil {
+		return nil, nil, false
 	}
 	if at, ok := g.started[userID]; ok && time.Since(at) < interval {
-		return false
+		return nil, nil, false
 	}
-	g.running[userID]++
+	ctx, cancel := context.WithCancel(parent)
+	run := &syncRun{cancel: cancel, done: make(chan struct{})}
+	g.running[userID] = run
 	g.started[userID] = time.Now()
-	return true
+	return run, ctx, true
 }
 
-func (g *syncGuard) done(userID int) {
+// active reports whether run is still the sync of userID, that is, no manual sync took over.
+func (g *syncGuard) active(userID int, run *syncRun) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.running[userID] > 0 {
-		g.running[userID]--
+	return g.running[userID] == run
+}
+
+// end unregisters run and releases whoever waits for it. The goroutine that registered the run
+// calls it, once the run is over; calling it again does nothing.
+func (g *syncGuard) end(userID int, run *syncRun) {
+	g.mu.Lock()
+	if g.running[userID] == run {
+		delete(g.running, userID)
 	}
+	g.mu.Unlock()
+	run.once.Do(func() {
+		if run.cancel != nil {
+			run.cancel()
+		}
+		close(run.done)
+	})
 }
 
 // RunAutoSync syncs every watching user whose last sync started more than interval ago, until ctx
 // is cancelled. Only users who already have synced repositories qualify, so nobody's account is
-// imported without pressing Sync once.
+// imported without pressing Sync once. Each user is synced on its own goroutine under a time
+// limit, so one slow GitHub request never holds up the others.
 func (h *Handler) RunAutoSync(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(autoSyncCheckEvery)
 	defer ticker.Stop()
@@ -80,30 +122,59 @@ func (h *Handler) RunAutoSync(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 		}
-		for _, userID := range h.watchingUsers() {
-			if ctx.Err() != nil {
-				return
-			}
-			h.autoSyncUser(ctx, userID, interval)
-		}
+		h.autoSyncDueUsers(ctx, interval)
 	}
 }
 
-func (h *Handler) autoSyncUser(ctx context.Context, userID int, interval time.Duration) {
-	if !h.syncs.startIfDue(userID, interval) {
-		return
+// autoSyncDueUsers starts a background sync for every due watching user and returns a group that
+// is done when they have all ended.
+func (h *Handler) autoSyncDueUsers(ctx context.Context, interval time.Duration) *sync.WaitGroup {
+	wg := &sync.WaitGroup{}
+	sem := make(chan struct{}, autoSyncWorkers)
+	for _, userID := range h.watchingUsers() {
+		if ctx.Err() != nil {
+			break
+		}
+		run, runCtx, ok := h.syncs.beginIfDue(ctx, userID, interval)
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer h.syncs.end(userID, run)
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-runCtx.Done():
+				return
+			}
+			runCtx, cancel := context.WithTimeout(runCtx, autoSyncPassTimeout)
+			defer cancel()
+			h.autoSyncUser(runCtx, userID, run)
+		}()
 	}
+	return wg
+}
+
+// autoSyncUser runs the incremental sync of one user; the caller registered run and ends it.
+func (h *Handler) autoSyncUser(ctx context.Context, userID int, run *syncRun) {
 	user, err := h.storage.GetUserByID(ctx, userID)
 	if err != nil || user == nil || user.AccessToken == "" {
-		h.syncs.done(userID)
 		return
 	}
 	if _, total, err := h.storage.ListRepositories(ctx, userID, 1, 1, ""); err != nil || total == 0 {
-		h.syncs.done(userID)
 		return
 	}
 	log.Debug().Int("user_id", userID).Msg("Automatic sync started")
-	h.runSync(ctx, userID, user.AccessToken, true)
+	h.runSync(ctx, userID, user.AccessToken, true, run)
+}
+
+// mayAnnounce reports whether an incremental pass may tell the browser to refetch: it stored
+// something, was not interrupted, and is still the user's sync. A pass that a manual sync took over
+// from stays silent, so it cannot close the manual sync's progress overlay.
+func (h *Handler) mayAnnounce(ctx context.Context, userID int, run *syncRun, changed bool) bool {
+	return changed && ctx.Err() == nil && h.syncs.active(userID, run)
 }
 
 // scoreIsStale reports whether a repository has no score or an old one.

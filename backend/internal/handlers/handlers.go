@@ -944,6 +944,18 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 	userID := user.ID
 	accessToken := user.AccessToken
 
+	// Only one sync of a user runs at a time. A background pass is interrupted, a second manual
+	// sync is refused.
+	run, wait, ok := h.syncs.beginManual(userID)
+	if !ok {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "already_running",
+			"message": "A sync is already running",
+		})
+		return
+	}
+
 	// Return immediately - sync runs in background
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -953,8 +965,13 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 
 	// Run sync in background; do not use r.Context(): it is cancelled when the handler returns (after 202),
 	// which would immediately cancel the sync and trigger sync:error. Use Background so sync runs to completion.
-	h.syncs.start(userID)
-	go h.runSync(context.Background(), userID, accessToken, false) // #nosec G118 -- intentional: sync must outlive the HTTP request
+	go func() { // #nosec G118 -- intentional: sync must outlive the HTTP request
+		defer h.syncs.end(userID, run)
+		if wait != nil {
+			<-wait // the interrupted background pass has unwound
+		}
+		h.runSync(context.Background(), userID, accessToken, false, run)
+	}()
 }
 
 // runSync performs the actual sync operation in the background. Every repository it stores is
@@ -963,9 +980,8 @@ func (h *Handler) SyncRepositories(w http.ResponseWriter, r *http.Request) {
 // An incremental sync (see RunAutoSync) is silent and cheap: a repository that is already stored
 // is only re-read when GitHub reports that its workflows changed, its runs are left to the live
 // poller, and its score is recomputed only when it is missing or old. New repositories are synced
-// in full. The caller has called h.syncs.start; runSync ends it.
-func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, incremental bool) {
-	defer h.syncs.done(userID)
+// in full. The caller registered run with h.syncs and ends it when runSync returns.
+func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, incremental bool, run *syncRun) {
 
 	// Create GitHub client with user's token
 	token := &oauth2.Token{AccessToken: accessToken}
@@ -1002,10 +1018,14 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, i
 			h.wsHub.SendSyncProgress(userID, i, total, ghRepo.GetFullName())
 		}
 
+		// Known means this user already holds the repository. One that exists only because another
+		// user synced it is new to this user and gets the full treatment, so it shows up for them.
 		known := false
 		if incremental {
 			stored, err := h.storage.GetRepositoryByGitHubID(ctx, ghRepo.GetID())
-			known = err == nil && stored != nil
+			if err == nil && stored != nil {
+				known, _ = h.storage.HasRepositoryAccess(ctx, userID, stored.ID)
+			}
 		}
 
 		// Convert and save repository
@@ -1133,8 +1153,9 @@ func (h *Handler) runSync(ctx context.Context, userID int, accessToken string, i
 		Int("runs", syncedRuns).
 		Msg("Sync completed")
 
-	// An incremental sync that stored nothing stays silent; otherwise the browser refetches.
-	if incremental && !changed {
+	// An incremental sync that stored nothing stays silent; otherwise the browser refetches. One
+	// that a manual sync took over from must not report completion over the manual sync.
+	if incremental && !h.mayAnnounce(ctx, userID, run, changed) {
 		return
 	}
 	h.wsHub.SendSyncComplete(userID, syncedRepos, syncedWorkflows, syncedRuns)

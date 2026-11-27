@@ -237,3 +237,27 @@ func TestListWorkflowsIfChanged(t *testing.T) {
 		t.Fatalf("expected not modified, got changed=%v workflows=%v", changed, workflows)
 	}
 }
+
+func TestListWorkflowsIfChanged_MultiPageReturnsNoETag(t *testing.T) {
+	gh := newFakeGitHub(t)
+	// total_count says there is more than the page holds: the later pages are not covered by this ETag.
+	gh.serve("repos/acme/app/actions/workflows?per_page=100", `W/"wf-v1"`, map[string]interface{}{
+		"total_count": 150,
+		"workflows":   []map[string]interface{}{{"id": 7, "name": "CI", "path": ".github/workflows/ci.yml"}},
+	})
+	c, api := gh.client(t)
+
+	workflows, etag, changed, err := c.ListWorkflowsIfChanged(context.Background(), api, "acme", "app", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed || len(workflows) == 0 {
+		t.Fatalf("expected the workflows, got changed=%v workflows=%d", changed, len(workflows))
+	}
+	if etag != "" {
+		t.Fatalf("a multi-page list must not return an ETag, got %q", etag)
+	}
+	if got := gh.requests.Load(); got != 2 {
+		t.Fatalf("expected the conditional request plus a full read, got %d requests", got)
+	}
+}
