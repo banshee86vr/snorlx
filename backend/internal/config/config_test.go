@@ -465,3 +465,40 @@ func TestLoad_BasePath(t *testing.T) {
 		t.Error("expected an error for an invalid BASE_PATH")
 	}
 }
+
+func TestLoad_AutoSyncInterval(t *testing.T) {
+	t.Setenv("DEV_MODE", "true")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "")
+
+	cases := []struct {
+		name    string
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{name: "default", raw: "", want: defaultAutoSyncInterval},
+		{name: "custom", raw: "2h", want: 2 * time.Hour},
+		{name: "disabled", raw: "0", want: 0},
+		{name: "too short", raw: "1m", wantErr: true},
+		{name: "negative", raw: "-1h", wantErr: true},
+		{name: "not a duration", raw: "often", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AUTO_SYNC_INTERVAL", tc.raw)
+			cfg, err := Load()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for AUTO_SYNC_INTERVAL=%q", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.AutoSyncInterval != tc.want {
+				t.Errorf("AutoSyncInterval = %s, want %s", cfg.AutoSyncInterval, tc.want)
+			}
+		})
+	}
+}

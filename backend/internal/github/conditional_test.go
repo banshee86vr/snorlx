@@ -212,3 +212,28 @@ func TestListRecentWorkflowRunsIfChanged(t *testing.T) {
 		t.Fatalf("expected not modified, got changed=%v runs=%v", changed, runs)
 	}
 }
+
+func TestListWorkflowsIfChanged(t *testing.T) {
+	gh := newFakeGitHub(t)
+	gh.serve("repos/acme/app/actions/workflows?per_page=100", `W/"wf-v1"`, map[string]interface{}{
+		"total_count": 1,
+		"workflows":   []map[string]interface{}{{"id": 7, "name": "CI", "path": ".github/workflows/ci.yml"}},
+	})
+	c, api := gh.client(t)
+
+	workflows, etag, changed, err := c.ListWorkflowsIfChanged(context.Background(), api, "acme", "app", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !changed || len(workflows) != 1 || workflows[0].GetID() != 7 || etag == "" {
+		t.Fatalf("expected the CI workflow with an ETag, got changed=%v workflows=%d etag=%q", changed, len(workflows), etag)
+	}
+
+	workflows, _, changed, err = c.ListWorkflowsIfChanged(context.Background(), api, "acme", "app", etag)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if changed || workflows != nil {
+		t.Fatalf("expected not modified, got changed=%v workflows=%v", changed, workflows)
+	}
+}

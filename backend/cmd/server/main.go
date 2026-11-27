@@ -102,6 +102,15 @@ func main() {
 		log.Info().Msg("Live run poller disabled (RUN_POLL_INTERVAL=0); runs update through webhooks and manual refresh")
 	}
 
+	// Auto sync: keeps repositories, workflows and scores current for watching users, so the Sync
+	// button is rarely needed
+	if cfg.AutoSyncInterval > 0 {
+		log.Info().Dur("interval", cfg.AutoSyncInterval).Msg("Automatic sync enabled")
+		go h.RunAutoSync(maintenanceCtx, cfg.AutoSyncInterval)
+	} else {
+		log.Info().Msg("Automatic sync disabled (AUTO_SYNC_INTERVAL=0); repositories update through the Sync button")
+	}
+
 	// Setup router
 	r := chi.NewRouter()
 
