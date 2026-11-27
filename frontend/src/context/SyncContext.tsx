@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from 'react';
 import { useSocket } from './SocketContext';
 import { useQueryClient } from '@tanstack/react-query';
+import { api, type SyncStatus } from '../services/api';
 
 interface SyncProgress {
   isSyncing: boolean;
@@ -15,7 +16,12 @@ interface SyncContextType {
   startSync: () => void;
   /** Ends the progress display after the sync request was rejected. */
   failSync: () => void;
+  /** The sync request was accepted: follow the sync through the status endpoint as well. */
+  syncAccepted: () => void;
 }
+
+/** How often the backend is asked for the sync state while a sync is shown. */
+const STATUS_POLL_MS = 2000;
 
 const SyncContext = createContext<SyncContextType | undefined>(undefined);
 
@@ -27,6 +33,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     progress: 0,
     currentRepo: null,
   });
+
+  // Set once the backend accepted the request. The WebSocket normally reports the progress; the
+  // status endpoint covers the cases where it cannot (socket down, or blocked by a proxy).
+  const [following, setFollowing] = useState(false);
 
   const { subscribe } = useSocket();
   const queryClient = useQueryClient();
@@ -43,8 +53,41 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   useEffect(() => cancelReset, [cancelReset]);
 
   const failSync = useCallback(() => {
+    setFollowing(false);
     setSync(prev => ({ ...prev, isSyncing: false }));
   }, []);
+
+  const syncAccepted = useCallback(() => setFollowing(true), []);
+
+  // The sync is over (reported by the WebSocket or by the status endpoint): reload the data and let
+  // the finished bar show for a moment.
+  const completeSync = useCallback(() => {
+    setFollowing(false);
+    setSync(prev => ({
+      ...prev,
+      isSyncing: false,
+      progress: 100,
+    }));
+    // Refresh all data
+    queryClient.invalidateQueries({ queryKey: ['repositories'] });
+    queryClient.invalidateQueries({ queryKey: ['repositories', 'scores'] });
+    queryClient.invalidateQueries({ queryKey: ['workflows'] });
+    queryClient.invalidateQueries({ queryKey: ['runs'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    queryClient.invalidateQueries({ queryKey: ['pipelines'] });
+    // Reset after 2 seconds
+    cancelReset();
+    resetTimer.current = setTimeout(() => {
+      resetTimer.current = null;
+      setSync({
+        isSyncing: false,
+        syncedCount: 0,
+        totalToSync: 0,
+        progress: 0,
+        currentRepo: null,
+      });
+    }, 2000);
+  }, [cancelReset, queryClient]);
 
   const startSync = useCallback(() => {
     cancelReset();
@@ -90,34 +133,11 @@ export function SyncProvider({ children }: { children: ReactNode }) {
           }));
           break;
         }
-        case 'sync:complete': {
-          setSync(prev => ({
-            ...prev,
-            isSyncing: false,
-            progress: 100,
-          }));
-          // Refresh all data
-          queryClient.invalidateQueries({ queryKey: ['repositories'] });
-          queryClient.invalidateQueries({ queryKey: ['repositories', 'scores'] });
-          queryClient.invalidateQueries({ queryKey: ['workflows'] });
-          queryClient.invalidateQueries({ queryKey: ['runs'] });
-          queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-          queryClient.invalidateQueries({ queryKey: ['pipelines'] });
-          // Reset after 2 seconds
-          cancelReset();
-          resetTimer.current = setTimeout(() => {
-            resetTimer.current = null;
-            setSync({
-              isSyncing: false,
-              syncedCount: 0,
-              totalToSync: 0,
-              progress: 0,
-              currentRepo: null,
-            });
-          }, 2000);
+        case 'sync:complete':
+          completeSync();
           break;
-        }
         case 'sync:error': {
+          setFollowing(false);
           setSync(prev => ({
             ...prev,
             isSyncing: false,
@@ -126,10 +146,49 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         }
       }
     });
-  }, [subscribe, cancelReset, queryClient]);
+  }, [subscribe, cancelReset, completeSync]);
+
+  // While a sync is shown, also ask the backend for its state.
+  useEffect(() => {
+    if (!following) return;
+    let cancelled = false;
+    const poll = async () => {
+      let status: SyncStatus;
+      try {
+        status = await api.syncStatus();
+      } catch {
+        return; // transient: the next tick asks again
+      }
+      if (cancelled) return;
+      if (status.running) {
+        setSync(prev => ({
+          ...prev,
+          isSyncing: true,
+          syncedCount: status.synced,
+          totalToSync: status.total,
+          // The WebSocket may already have reported a later step; the bar never moves backwards.
+          progress: Math.max(
+            prev.progress,
+            status.total > 0 ? Math.round((status.synced / status.total) * 100) : 0,
+          ),
+          currentRepo: status.current || prev.currentRepo,
+        }));
+      } else if (status.error) {
+        setFollowing(false);
+        setSync(prev => ({ ...prev, isSyncing: false }));
+      } else {
+        completeSync();
+      }
+    };
+    const id = setInterval(() => void poll(), STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [following, completeSync]);
 
   return (
-    <SyncContext.Provider value={{ sync, startSync, failSync }}>
+    <SyncContext.Provider value={{ sync, startSync, failSync, syncAccepted }}>
       {children}
     </SyncContext.Provider>
   );
